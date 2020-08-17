@@ -94,24 +94,24 @@ Since VkResult lacks the diversity of `HRESULT` error codes, this loader prints 
 * This loader does not support `DXGI_FORMAT_B8G8R8X8_UNORM`, `DXGI_FORMAT_B8G8R8X8_TYPELESS`, `DXGI_FORMAT_B8G8R8X8_UNORM_SRGB` formats. Vulkan does not support RGB formats with 32-bit stride.
 * This loader does not support `DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM`. Vulkan does not provide support for XR biased images.
 * This loader does not support almost any YUV formats. This feature is in the backlog. The full list of YUV formats that are not supported:
- * `DXGI_FORMAT_AYUV`
- * `DXGI_FORMAT_Y410`
- * `DXGI_FORMAT_Y416`
- * `DXGI_FORMAT_NV12`
- * `DXGI_FORMAT_P010`
- * `DXGI_FORMAT_P016`
- * `DXGI_FORMAT_420_OPAQUE`
- * `DXGI_FORMAT_YUY2`
- * `DXGI_FORMAT_Y210`
- * `DXGI_FORMAT_Y216`
- * `DXGI_FORMAT_NV11`
- * `DXGI_FORMAT_AI44`
- * `DXGI_FORMAT_IA44`
- * `DXGI_FORMAT_P8`
- * `DXGI_FORMAT_A8P8`
- * `DXGI_FORMAT_P208`
- * `DXGI_FORMAT_V208`
- * `DXGI_FORMAT_V408`
+  * `DXGI_FORMAT_AYUV`
+  * `DXGI_FORMAT_Y410`
+  * `DXGI_FORMAT_Y416`
+  * `DXGI_FORMAT_NV12`
+  * `DXGI_FORMAT_P010`
+  * `DXGI_FORMAT_P016`
+  * `DXGI_FORMAT_420_OPAQUE`
+  * `DXGI_FORMAT_YUY2`
+  * `DXGI_FORMAT_Y210`
+  * `DXGI_FORMAT_Y216`
+  * `DXGI_FORMAT_NV11`
+  * `DXGI_FORMAT_AI44`
+  * `DXGI_FORMAT_IA44`
+  * `DXGI_FORMAT_P8`
+  * `DXGI_FORMAT_A8P8`
+  * `DXGI_FORMAT_P208`
+  * `DXGI_FORMAT_V208`
+  * `DXGI_FORMAT_V408`
 * This loader DOES support compressed BC formats, `DXGI_FORMAT_R8G8_B8G8_UNORM` and `DXGI_FORMAT_G8R8_G8B8_UNORM`. See **padding** section for more details.
 * This loader DOES support `DXGI_FORMAT_B4G4R4A4_UNORM` format, but only if `VK_EXT_4444_formats` extension is provided.
 
