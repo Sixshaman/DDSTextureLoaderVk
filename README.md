@@ -88,12 +88,12 @@ If the developer uses `VK_NO_PROTOTYPES`, they are expected to include their own
 Since VkResult lacks the diversity of `HRESULT` error codes, this loader prints warning messages to the Visual Studio console (under Windows) or to stdio console (under Linux) in debug builds, to make the developer see what's gone wrong. To disable thos behavior, define `DDS_NO_ISSUE_LOGGING`.
 
 ## Format support
-* This loader does not support any packed D32S8X24 formats. The reason for this is that Direct3D uses 64-bit stride and Vulkan uses 40-bit stride for these formats.
+* This loader does not support all packed D32S8X24 formats. The reason for this is that Direct3D uses 64-bit stride and Vulkan uses 40-bit stride for these formats.
 * This loader does not support `DXGI_FORMAT_R24_UNORM_X8_TYPELESS` and `DXGI_FORMAT_X24_TYPELESS_G8_UINT` formats. Separate depth-stencil attachments are not handled in this loader.
 * This loader does not support `DXGI_FORMAT_A8_UNORM` and `DXGI_FORMAT_R1_UNORM` formats. There are no equivalents to these formats in Vulkan.
 * This loader does not support `DXGI_FORMAT_B8G8R8X8_UNORM`, `DXGI_FORMAT_B8G8R8X8_TYPELESS`, `DXGI_FORMAT_B8G8R8X8_UNORM_SRGB` formats. Vulkan does not support RGB formats with 32-bit stride.
 * This loader does not support `DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM`. Vulkan does not provide support for XR biased images.
-* This loader does not support almost any YUV formats. This feature is in the backlog. The full list of YUV formats that are not supported:
+* This loader does not support almost all of YUV formats. This feature is in the backlog. The full list of YUV formats that are not supported:
   * `DXGI_FORMAT_AYUV`
   * `DXGI_FORMAT_Y410`
   * `DXGI_FORMAT_Y416`
