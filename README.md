@@ -1,6 +1,8 @@
 # DDSTextureLoaderVk
 A cross-platform lightweight DDS texture loader for Vulkan. Based on Microsoft's DirectXTex DDSTextureLoader12: https://github.com/microsoft/DirectXTex/tree/master/DDSTextureLoader  
+
 No function allocates the memory required for images, since different developers may organize their image memory layout differently. The developer is expected to call `vkBindImageMemory` to allocate the memory for the image.  
+
 The function only creates a `VkImage` object and loads the data from the disk. To use the loaded data in the application, the developer is expected to manually upload the data into intermediate buffer and then issue a `vkCmdCopyBufferToImage` command.  
 
 Wasn't tested yet.  
