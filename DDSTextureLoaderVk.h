@@ -3,7 +3,7 @@
 //
 // Functions for loading a DDS texture and creating a Vulkan runtime resource for it
 //
-// Heavily based on Microsoft's DDSTextureLoader12: https://github.com/microsoft/DirectXTex/tree/master/DDSTextureLoader
+// Basically a ripoff of Microsoft's DDSTextureLoader12: https://github.com/microsoft/DirectXTex/tree/master/DDSTextureLoader
 // Licensed under the MIT License.
 //
 //--------------------------------------------------------------------------------------
@@ -72,7 +72,7 @@ namespace Vulkan
         VkDevice vkDevice,
         const char_type* fileName,
         VkImage* texture,
-        std::unique_ptr<uint8_t[]>& ddsData,
+        std::vector<uint8_t>& ddsData,
         std::vector<VkBufferImageCopy>& subresources,
         size_t maxsize,
         size_t initialOffset,
@@ -107,7 +107,7 @@ namespace Vulkan
         unsigned int loadFlags,
         VkAllocationCallbacks* allocator,
         VkImage* texture,
-        std::unique_ptr<uint8_t[]>& ddsData,
+        std::vector<uint8_t>& ddsData,
         std::vector<VkBufferImageCopy>& subresources,
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);

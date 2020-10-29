@@ -3,7 +3,7 @@
 //
 // Functions for loading a DDS texture and creating a Vulkan runtime resource for it
 //
-// Heavily based on Microsoft's DDSTextureLoader12: https://github.com/microsoft/DirectXTex/tree/master/DDSTextureLoader
+// Basically a ripoff of Microsoft's DDSTextureLoader12: https://github.com/microsoft/DirectXTex/tree/master/DDSTextureLoader
 // Licensed under the MIT License.
 //
 //--------------------------------------------------------------------------------------
@@ -135,7 +135,7 @@ namespace
     template<uint32_t TNameLength>
     inline void SetDebugObjectName(VkDevice device, VkImage image, const char(&name)[TNameLength]) noexcept
     {
-        #if !defined(NO_VK_DEBUG_NAME) && defined(VK_EXT_debug_utils) && (defined(_DEBUG) || defined(PROFILE))
+        #if defined(USE_VK_DEBUG_NAME) && defined(VK_EXT_debug_utils) && (defined(_DEBUG) || defined(PROFILE))
             VkDebugUtilsObjectNameInfoEXT debugObjectNameInfo;   
             debugObjectNameInfo.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
             debugObjectNameInfo.pNext        = nullptr;
@@ -144,6 +144,10 @@ namespace
             debugObjectNameInfo.pObjectName  = name;
 
             vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
+        #else
+            UNREFERENCED_PARAMETER(device);
+            UNREFERENCED_PARAMETER(image);
+            UNREFERENCED_PARAMETER(name);
         #endif
     }
 
@@ -231,7 +235,7 @@ namespace
     //--------------------------------------------------------------------------------------
     VkResult LoadTextureDataFromFile(
         const char_type* fileName,
-        std::unique_ptr<uint8_t[]>& ddsData,
+        std::vector<uint8_t>& ddsData,
         const DDS_HEADER** header,
         const uint8_t** bitData,
         size_t* bitSize) noexcept
@@ -250,14 +254,14 @@ namespace
 
         // Get the file size
         std::streampos fileBegin = hFile.tellg();
-        hFile.seekg(hFile.end);
+        hFile.seekg(0, std::ios::end);
         std::streampos fileEnd = hFile.tellg();
-        hFile.seekg(hFile.beg);
+        hFile.seekg(0, std::ios::beg);
 
         size_t fileSize = fileEnd - fileBegin;
         
-        uint32_t fileSizeHighPart = (uint32_t)((fileSize && 0xffffffff00000000ull) >> 32);
-        uint32_t fileSizeLowPart  = (uint32_t)((fileSize && 0x00000000ffffffffull) >>  0);
+        uint32_t fileSizeHighPart = (uint32_t)(uint64_t(fileSize & 0xffffffff00000000ull) >> 32);
+        uint32_t fileSizeLowPart  = (uint32_t)(uint64_t(fileSize & 0x00000000ffffffffull) >>  0);
 
         // File is too big for 32-bit allocation, so reject read
         if(fileSizeHighPart > 0)
@@ -272,15 +276,13 @@ namespace
         }
 
         // create enough space for the file data
-        ddsData.reset(new (std::nothrow) uint8_t[fileSizeLowPart]);
-        if (!ddsData)
-        {
-            return VK_ERROR_UNKNOWN;
-        }
+        ddsData.clear();
+        ddsData.resize(fileSizeLowPart);
 
         // read the data in
-        uint32_t BytesRead = hFile.readsome((char*)ddsData.get(), fileSizeLowPart);
-        
+        hFile.read((char*)ddsData.data(), fileSizeLowPart);
+        uint32_t BytesRead = (uint32_t)hFile.gcount();
+
         if(hFile.bad())
         {
             return VK_ERROR_UNKNOWN;
@@ -292,13 +294,13 @@ namespace
         }
 
         // DDS files always start with the same magic number ("DDS ")
-        auto dwMagicNumber = *reinterpret_cast<const uint32_t*>(ddsData.get());
+        auto dwMagicNumber = *reinterpret_cast<const uint32_t*>(ddsData.data());
         if (dwMagicNumber != DDS_MAGIC)
         {
             return VK_ERROR_UNKNOWN;
         }
 
-        auto hdr = reinterpret_cast<const DDS_HEADER*>(ddsData.get() + sizeof(uint32_t));
+        auto hdr = reinterpret_cast<const DDS_HEADER*>(ddsData.data() + sizeof(uint32_t));
 
         // Verify header to validate DDS file
         if (hdr->size != sizeof(DDS_HEADER) ||
@@ -325,7 +327,7 @@ namespace
         *header = hdr;
         auto offset = sizeof(uint32_t) + sizeof(DDS_HEADER)
             + (bDXT10Header ? sizeof(DDS_HEADER_DXT10) : 0);
-        *bitData = ddsData.get() + offset;
+        *bitData = ddsData.data() + offset;
         *bitSize = fileSizeLowPart - offset;
 
         return VK_SUCCESS;
@@ -925,6 +927,110 @@ namespace
     }
 
     //--------------------------------------------------------------------------------------
+    // Get surface information for a particular format
+    //--------------------------------------------------------------------------------------
+    VkResult GetSurfaceInfo(
+        size_t width,
+        size_t height,
+        VkFormat fmt,
+        size_t* outNumBytes) noexcept
+    {
+        uint64_t numBytes = 0;
+
+        bool bc = false;
+        bool packed = false;
+        bool planar = false;
+        size_t bpe = 0;
+        switch (fmt)
+        {
+        case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+        case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
+        case VK_FORMAT_BC4_SNORM_BLOCK:
+        case VK_FORMAT_BC4_UNORM_BLOCK:
+            bc = true;
+            bpe = 8;
+            break;
+
+        case VK_FORMAT_BC2_UNORM_BLOCK:
+        case VK_FORMAT_BC2_SRGB_BLOCK:
+        case VK_FORMAT_BC3_UNORM_BLOCK:
+        case VK_FORMAT_BC3_SRGB_BLOCK:
+        case VK_FORMAT_BC5_UNORM_BLOCK:
+        case VK_FORMAT_BC5_SNORM_BLOCK:
+        case VK_FORMAT_BC6H_UFLOAT_BLOCK:
+        case VK_FORMAT_BC6H_SFLOAT_BLOCK:
+        case VK_FORMAT_BC7_UNORM_BLOCK:
+        case VK_FORMAT_BC7_SRGB_BLOCK:
+            bc = true;
+            bpe = 16;
+            break;
+
+        case VK_FORMAT_G8B8G8R8_422_UNORM:
+        case VK_FORMAT_B8G8R8G8_422_UNORM:
+            packed = true;
+            bpe = 4;
+            break;
+
+        default:
+            break;
+        }
+
+        if (bc)
+        {
+            uint64_t numBlocksWide = 0;
+            if (width > 0)
+            {
+                numBlocksWide = std::max<uint64_t>(1u, (uint64_t(width) + 3u) / 4u);
+            }
+            uint64_t numBlocksHigh = 0;
+            if (height > 0)
+            {
+                numBlocksHigh = std::max<uint64_t>(1u, (uint64_t(height) + 3u) / 4u);
+            }
+
+            numBytes = numBlocksWide * bpe * numBlocksHigh;
+        }
+        else if (packed)
+        {
+            numBytes = ((uint64_t(width) + 1u) >> 1) * bpe * height;
+        }
+        else if (planar)
+        {
+            uint64_t rowBytes = ((uint64_t(width) + 1u) >> 1) * bpe;
+            numBytes = (rowBytes * uint64_t(height)) + ((rowBytes * uint64_t(height) + 1u) >> 1);
+        }
+        else
+        {
+            size_t bpp = BitsPerPixel(fmt);
+            if(bpp == 0)
+                return VK_ERROR_UNKNOWN;
+
+            uint64_t rowBytes = (uint64_t(width) * bpp + 7u) / 8u; // round up to nearest byte
+            numBytes = rowBytes * height;
+        }
+
+#if defined(_M_IX86) || defined(_M_ARM) || defined(_M_HYBRID_X86_ARM64)
+        static_assert(sizeof(size_t) == 4, "Not a 32-bit platform!");
+        if (numBytes > UINT32_MAX || rowBytes > UINT32_MAX || numRows > UINT32_MAX)
+        {
+            IssueWarning("Error reading surface format: arithmetic overflow");
+            return VK_ERROR_UNKNOWN;
+        }
+#else
+        static_assert(sizeof(size_t) == 8, "Not a 64-bit platform!");
+#endif
+
+        if (outNumBytes)
+        {
+            *outNumBytes = static_cast<size_t>(numBytes);
+        }
+
+        return VK_SUCCESS;
+    }
+
+    //--------------------------------------------------------------------------------------
     #define ISBITMASK( r,g,b,a ) ( ddpf.RBitMask == r && ddpf.GBitMask == g && ddpf.BBitMask == b && ddpf.ABitMask == a )
 
     VkFormat GetVkFormat( const DDS_PIXELFORMAT& ddpf ) noexcept
@@ -1249,7 +1355,6 @@ namespace
         tdepth = 0;
 
         size_t NumBytes = 0;
-        size_t RowBytes = 0;
         const uint8_t* pEndBits = bitData + bitSize;
 
         initData.clear();
@@ -1263,15 +1368,28 @@ namespace
                 size_t w = width;
                 size_t h = height;
                 size_t d = depth;
+                
                 for (size_t i = 0; i < mipCount; i++)
                 {
+                    VkResult surfInfoRes = GetSurfaceInfo(w, h, format, &NumBytes);
+                    if(surfInfoRes != VK_SUCCESS)
+                    {
+                        return surfInfoRes;
+                    }
+
+                    if(NumBytes > UINT32_MAX)
+                    {
+                        IssueWarning("Error reading DDS: arithmetic overflow");
+                        return VK_ERROR_UNKNOWN;
+                    }
+
                     if ((mipCount <= 1) || !maxsize || (w <= maxsize && h <= maxsize && d <= maxsize))
                     {
                         if (!twidth)
                         {
-                            twidth = w;
+                            twidth  = w;
                             theight = h;
-                            tdepth = d;
+                            tdepth  = d;
                         }
 
                         //Vulkan stores row and depth pitch in texels instead of bytes. This can lead to problems with some
@@ -1284,18 +1402,18 @@ namespace
 
                         VkBufferImageCopy res;
                         res.bufferOffset                    = initialOffset + (pSrcBits - bitData);
-                        res.bufferRowLength                 = w;
-                        res.bufferImageHeight               = h;
+                        res.bufferRowLength                 = (uint32_t)w;
+                        res.bufferImageHeight               = (uint32_t)h;
                         res.imageOffset.x                   = 0;
                         res.imageOffset.y                   = 0;
                         res.imageOffset.z                   = 0;
-                        res.imageExtent.width               = w;
-                        res.imageExtent.height              = h;
-                        res.imageExtent.depth               = d;
-                        res.imageSubresource.baseArrayLayer = j;
+                        res.imageExtent.width               = (uint32_t)w;
+                        res.imageExtent.height              = (uint32_t)h;
+                        res.imageExtent.depth               = (uint32_t)d;
+                        res.imageSubresource.baseArrayLayer = (uint32_t)j;
                         res.imageSubresource.layerCount     = 1;
                         res.imageSubresource.aspectMask     = IsDepthStencil(format) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
-                        res.imageSubresource.mipLevel       = i;
+                        res.imageSubresource.mipLevel       = (uint32_t)i;
 
                         //We don't support plane resources yet. If we did, we'd have to call AdjustPlaneResource() right there
 
@@ -1725,7 +1843,7 @@ namespace
         const char* fileName,
         VkImage image) noexcept
     {
-#if !defined(NO_D3D12_DEBUG_NAME) && defined(VK_EXT_debug_utils) && ( defined(_DEBUG) || defined(PROFILE) )
+#if defined(USE_VK_DEBUG_NAME) && defined(VK_EXT_debug_utils) && ( defined(_DEBUG) || defined(PROFILE) )
         if(image != VK_NULL_HANDLE)
         {
             const char* pstrName = strrchr(fileName, '\\');
@@ -1747,6 +1865,10 @@ namespace
 
             vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
         }
+#else
+        UNREFERENCED_PARAMETER(device);
+        UNREFERENCED_PARAMETER(fileName);
+        UNREFERENCED_PARAMETER(image);
 #endif
     }
 } // anonymous namespace
@@ -1834,7 +1956,7 @@ VkResult Vulkan::LoadDDSTextureFromMemoryEx(
 
     errCode = CreateTextureFromDDS(vkDevice,
         header, bitData, bitSize, maxsize,
-        initialOffset, deviceLimits, usageFlags, createFlags, loadFlags,
+        initialOffset + (bitData - ddsData), deviceLimits, usageFlags, createFlags, loadFlags,
         allocator, texture, subresources, isCubeMap);
     if (errCode == VK_SUCCESS)
     {
@@ -1856,7 +1978,7 @@ VkResult Vulkan::LoadDDSTextureFromFile(
     VkDevice vkDevice,
     const char_type* fileName,
     VkImage* texture,
-    std::unique_ptr<uint8_t[]>& ddsData,
+    std::vector<uint8_t>& ddsData,
     std::vector<VkBufferImageCopy>& subresources,
     size_t maxsize,
     size_t initialOffset,
@@ -1891,7 +2013,7 @@ VkResult Vulkan::LoadDDSTextureFromFileEx(
     unsigned int loadFlags,
     VkAllocationCallbacks* allocator,
     VkImage* texture,
-    std::unique_ptr<uint8_t[]>& ddsData,
+    std::vector<uint8_t>& ddsData,
     std::vector<VkBufferImageCopy>& subresources,
     DDS_ALPHA_MODE* alphaMode,
     bool* isCubeMap)
@@ -1931,7 +2053,7 @@ VkResult Vulkan::LoadDDSTextureFromFileEx(
 
     errCode = CreateTextureFromDDS(vkDevice,
         header, bitData, bitSize, maxsize,
-        initialOffset, deviceLimits,
+        initialOffset + (bitData - ddsData.data()), deviceLimits,
         usageFlags, createFlags, loadFlags,
         allocator, texture, subresources, isCubeMap);
 
