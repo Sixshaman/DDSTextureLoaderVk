@@ -75,13 +75,13 @@ Parameters:
 * `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
 ## Debug object names
-Similar to DDSTextureLoader, this loader assigns debug object names in the debug mode if `VK_EXT_debug_utils` extension is present. To disable debug object labels, define `NO_VK_DEBUG_NAME`.
+Similar to DDSTextureLoader, this loader may assign debug object names in the debug mode. Because it requires enabling `VK_EXT_debug_utils` extension, it's disabled by default. To enable debug object labels, define `USE_VK_DEBUG_NAME`.
 
 ## SAL
 Unlike DDSTextureLoader, this loader does not use SAL. This is to make the loader cross-platform.
 
-## Queue families
-This loader creates the images on the default queue family. The developer is expected to issue `vkCmdPipelineBarrier` command to transfer the queue family ownership if needed.
+## Queue family ownership
+This loader creates the images on the default queue family (`queueFamilyIndexCount = 0`, `pQueueFamilyIndices = nullptr`). The developer is expected to issue `vkCmdPipelineBarrier` command to transfer the queue family ownership if needed.
 
 ## Using VK_NO_PROTOTYPES
 If the developer uses `VK_NO_PROTOTYPES`, they are expected to include their own prototype definitions in DDSVulkanFunctionsInclude.h.
