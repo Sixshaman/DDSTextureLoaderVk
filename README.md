@@ -83,6 +83,8 @@ Unlike DDSTextureLoader, this loader does not use SAL. This is to make the loade
 ## Queue family ownership
 This loader creates the images on the default queue family (`queueFamilyIndexCount = 0`, `pQueueFamilyIndices = nullptr`). The developer is expected to issue `vkCmdPipelineBarrier` command to transfer the queue family ownership if needed.
 
+`VK_SHARING_MODE_CONCURRENT` is currently not supported.
+
 ## Using VK_NO_PROTOTYPES
 If the developer uses `VK_NO_PROTOTYPES`, they are expected to include their own prototype definitions in DDSVulkanFunctionsInclude.h.
 
