@@ -86,6 +86,10 @@ struct DDS_PIXELFORMAT
 
 #define DDS_CUBEMAP 0x00000200 // DDSCAPS2_CUBEMAP
 
+#ifndef UNREFERENCED_PARAMETER
+#define UNREFERENCED_PARAMETER(P) (P)
+#endif
+
 enum DDS_MISC_FLAGS2
 {
     DDS_MISC_FLAGS2_ALPHA_MODE_MASK = 0x7L,
@@ -129,6 +133,8 @@ namespace
             OutputDebugStringA(wng);
         #elif !defined(DDS_NO_ISSUE_LOGGING) && defined(_DEBUG)
             std::wprintf(wng);
+        #else
+            UNREFERENCED_PARAMETER(wng);
         #endif
     }
 
