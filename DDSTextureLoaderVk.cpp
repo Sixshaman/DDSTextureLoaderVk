@@ -9,7 +9,6 @@
 //--------------------------------------------------------------------------------------
 
 #include "DDSTextureLoaderVk.h"
-#include "DDSVulkanFunctionsInclude.h"
 
 #include <assert.h>
 #include <algorithm>
@@ -31,7 +30,7 @@
 
 #pragma warning(disable : 4062)
 
-using namespace Vulkan;
+using namespace DDSTextureLoaderVk;
 
 //--------------------------------------------------------------------------------------
 // Macros
@@ -127,6 +126,23 @@ struct DDS_HEADER_DXT10
 //--------------------------------------------------------------------------------------
 namespace
 {
+#ifdef VK_NO_PROTOTYPES
+
+    PFN_vkCreateImage vkCreateImage = nullptr;
+
+    DDSTextureLoaderVk::PFN_DdsLoader_vkCreateImageUserPtr vkCreateImageWithUserPtr = nullptr;
+    void*                                                  vkCreateImageUserPtr     = nullptr;
+
+#ifdef VK_EXT_debug_utils
+
+    PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT = nullptr;
+
+    DDSTextureLoaderVk::PFN_DdsLoader_vkSetDebugUtilsObjectNameUserPtr vkSetDebugUtilsObjectNameEXTWithUserPtr = nullptr;
+    void*                                                              vkSetDebugUtilsObjectNameEXTUserPtr     = nullptr;
+
+#endif //VK_EXT_debug_utils
+#endif // VK_NO_PROTOTYPES
+
     inline void IssueWarning(const char* wng)
     {
         #if !defined(DDS_NO_ISSUE_LOGGING) && defined(_DEBUG) && defined(_WIN32)
@@ -141,7 +157,7 @@ namespace
     template<uint32_t TNameLength>
     inline void SetDebugObjectName(VkDevice device, VkImage image, const char(&name)[TNameLength]) noexcept
     {
-        #if defined(USE_VK_DEBUG_NAME) && defined(VK_EXT_debug_utils) && (defined(_DEBUG) || defined(PROFILE))
+        #if defined(VK_EXT_debug_utils) && !defined(NO_D3D12_DEBUG_NAME) && ( defined(_DEBUG) || defined(PROFILE) )
             VkDebugUtilsObjectNameInfoEXT debugObjectNameInfo;   
             debugObjectNameInfo.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
             debugObjectNameInfo.pNext        = nullptr;
@@ -149,7 +165,10 @@ namespace
             debugObjectNameInfo.objectHandle = (uint64_t)image;
             debugObjectNameInfo.pObjectName  = name;
 
-            vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
+            if(vkSetDebugUtilsObjectNameEXT != nullptr)
+            {
+                vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
+            }
         #else
             UNREFERENCED_PARAMETER(device);
             UNREFERENCED_PARAMETER(image);
@@ -1507,7 +1526,15 @@ namespace
         imageCreateInfo.pQueueFamilyIndices   = nullptr;
         imageCreateInfo.initialLayout         = VK_IMAGE_LAYOUT_UNDEFINED;
 
-        err = vkCreateImage(vkDevice, &imageCreateInfo, allocator, texture);
+        if(vkCreateImage != nullptr)
+        {
+            err = vkCreateImage(vkDevice, &imageCreateInfo, allocator, texture);
+        }
+        else
+        {
+            err = VK_ERROR_UNKNOWN;
+        }
+
         if(err == VK_SUCCESS)
         {
             assert(texture != nullptr && *texture != nullptr);
@@ -1849,7 +1876,7 @@ namespace
         const char* fileName,
         VkImage image) noexcept
     {
-#if defined(USE_VK_DEBUG_NAME) && defined(VK_EXT_debug_utils) && ( defined(_DEBUG) || defined(PROFILE) )
+#if defined(VK_EXT_debug_utils) && !defined(NO_VK_DEBUG_NAME) && ( defined(_DEBUG) || defined(PROFILE) )
         if(image != VK_NULL_HANDLE)
         {
             const char* pstrName = strrchr(fileName, '\\');
@@ -1869,7 +1896,10 @@ namespace
             debugObjectNameInfo.objectHandle = (uint64_t)image;
             debugObjectNameInfo.pObjectName  = fileName;
 
-            vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
+            if(vkSetDebugUtilsObjectNameEXT != nullptr)
+            {
+                vkSetDebugUtilsObjectNameEXT(device, &debugObjectNameInfo);
+            }
         }
 #else
         UNREFERENCED_PARAMETER(device);
@@ -1879,9 +1909,56 @@ namespace
     }
 } // anonymous namespace
 
+#ifdef VK_NO_PROTOTYPES
+
+    void DDSTextureLoaderVk::SetVkCreateImageFuncPtr(PFN_vkCreateImage funcPtr)
+    {
+        vkCreateImage = funcPtr;
+    }
+
+    void DDSTextureLoaderVk::SetVkCreateImageFuncPtrWithUserPtr(DDSTextureLoaderVk::PFN_DdsLoader_vkCreateImageUserPtr funcPtr)
+    {
+        vkCreateImageWithUserPtr = funcPtr;
+
+        vkCreateImage = [](VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage)
+        {
+            return vkCreateImageWithUserPtr(vkCreateImageUserPtr, device, pCreateInfo, pAllocator, pImage);
+        };
+    }
+
+    void DDSTextureLoaderVk::SetVkCreateImageUserPtr(void* userPtr)
+    {
+        vkCreateImageUserPtr = userPtr;
+    }
+
+#ifdef VK_EXT_debug_utils
+
+    void DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtr(PFN_vkSetDebugUtilsObjectNameEXT funcPtr)
+    {
+        vkSetDebugUtilsObjectNameEXT = funcPtr;
+    }
+
+    void DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr(DDSTextureLoaderVk::PFN_DdsLoader_vkSetDebugUtilsObjectNameUserPtr funcPtr)
+    {
+        vkSetDebugUtilsObjectNameEXTWithUserPtr = funcPtr;
+
+        vkSetDebugUtilsObjectNameEXT = [](VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo)
+        {
+            return vkSetDebugUtilsObjectNameEXTWithUserPtr(vkSetDebugUtilsObjectNameEXTUserPtr, device, pNameInfo);
+        };
+    }
+
+    void DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr)
+    {
+        vkSetDebugUtilsObjectNameEXTUserPtr = userPtr;
+    }
+
+#endif // VK_EXT_debug_utils
+#endif // VK_NO_PROTOTYPES
+
 
 //--------------------------------------------------------------------------------------
-VkResult Vulkan::LoadDDSTextureFromMemory(
+VkResult DDSTextureLoaderVk::LoadDDSTextureFromMemory(
     VkDevice vkDevice,
     const uint8_t* ddsData,
     size_t ddsDataSize,
@@ -1910,7 +1987,7 @@ VkResult Vulkan::LoadDDSTextureFromMemory(
 }
 
 
-VkResult Vulkan::LoadDDSTextureFromMemoryEx(
+VkResult DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
     VkDevice vkDevice,
     const uint8_t* ddsData,
     size_t ddsDataSize,
@@ -1980,7 +2057,7 @@ VkResult Vulkan::LoadDDSTextureFromMemoryEx(
 
 
 //--------------------------------------------------------------------------------------
-VkResult Vulkan::LoadDDSTextureFromFile(
+VkResult DDSTextureLoaderVk::LoadDDSTextureFromFile(
     VkDevice vkDevice,
     const char_type* fileName,
     VkImage* texture,
@@ -2008,7 +2085,7 @@ VkResult Vulkan::LoadDDSTextureFromFile(
         isCubeMap);
 }
 
-VkResult Vulkan::LoadDDSTextureFromFileEx(
+VkResult DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
     VkDevice vkDevice,
     const char_type* fileName,
     size_t maxsize,
@@ -2065,10 +2142,10 @@ VkResult Vulkan::LoadDDSTextureFromFileEx(
 
     if (errCode == VK_SUCCESS)
     {
-        #ifdef DDS_PATH_WIDE_CHAR
+        #if defined(WIN32) && defined(DDS_LOADER_PATH_WIDE_CHAR)
             int filenameSize = WideCharToMultiByte(CP_UTF8, 0, fileName, -1, nullptr, 0, nullptr, nullptr);
 
-            char* filenameU8 = (char*)alloca(filenameSize + 1);
+            char* filenameU8 = (char*)_malloca(filenameSize + 1);
             WideCharToMultiByte(CP_UTF8, 0, fileName, -1, filenameU8, filenameSize + 1, nullptr, nullptr);
 
             SetDebugTextureInfo(vkDevice, filenameU8, *texture);

@@ -18,25 +18,44 @@
 
 #if defined(_WIN32) && defined(UNICODE)
 
-#ifndef DDS_PATH_WIDE_CHAR
-#define DDS_PATH_WIDE_CHAR
+#ifndef DDS_LOADER_PATH_WIDE_CHAR
+#define DDS_LOADER_PATH_WIDE_CHAR
 #endif
 
-using char_type = wchar_t;
-
+    using char_type = wchar_t;
 #else
-
-#ifdef DDS_PATH_WIDE_CHAR
-#undef DDS_PATH_WIDE_CHAR
-#endif
-
-using char_type = char;
-
+    using char_type = char;
 #endif // _WIN32
 
-
-namespace Vulkan
+namespace DDSTextureLoaderVk
 {
+
+#ifdef VK_NO_PROTOTYPES
+
+//Normal version (for when vkCreateImage() is defined as-is)
+void SetVkCreateImageFuncPtr(PFN_vkCreateImage funcPtr);
+
+//User-ptr version (for when vkCreateImage() is defined as a class member function)
+typedef VkResult (*PFN_DdsLoader_vkCreateImageUserPtr)(void* userPtr, VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage);
+
+void SetVkCreateImageFuncPtrWithUserPtr(PFN_DdsLoader_vkCreateImageUserPtr funcPtr);
+void SetVkCreateImageUserPtr(void* userPtr);
+
+#ifdef VK_EXT_debug_utils
+
+//Normal version (for when vkSetDebugUtilsObjectNameEXT() is defined as-is)
+void SetVkSetDebugUtilsObjectNameFuncPtr(PFN_vkSetDebugUtilsObjectNameEXT funcPtr);
+
+//User-ptr version (for when vkSetDebugUtilsObjectNameEXT() is defined as a class member function)
+typedef VkResult (*PFN_DdsLoader_vkSetDebugUtilsObjectNameUserPtr)(void* userPtr, VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo);
+
+void SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr(PFN_DdsLoader_vkSetDebugUtilsObjectNameUserPtr funcPtr);
+void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
+
+#endif
+
+#endif
+
 #ifndef DDS_ALPHA_MODE_DEFINED
 #define DDS_ALPHA_MODE_DEFINED
     enum DDS_ALPHA_MODE : uint32_t
