@@ -102,10 +102,10 @@ Use these functions if `vkCreateImage()` is defined as a class member (i.e. `QVu
 
 Example:
 ```
-	DDSTextureLoaderVk::SetVkCreateImageFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage)
-	{
-		return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkCreateImage(device, pCreateInfo, pAllocator, pImage);
-	});
+DDSTextureLoaderVk::SetVkCreateImageFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage)
+{
+	return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkCreateImage(device, pCreateInfo, pAllocator, pImage);
+});
 DDSTextureLoaderVk::SetVkCreateImageUserPtr(m_pVulkanFunctions);
 
 DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
@@ -123,10 +123,10 @@ Use these functions if `vkSetDebugUtilsObjectNameEXT()` is defined as a class me
 
 Example:
 ```
-	DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo)
-	{
-		return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkSetDebugUtilsObjectNameEXT(device, pNameInfo);
-	});
+DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo)
+{
+	return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkSetDebugUtilsObjectNameEXT(device, pNameInfo);
+});
 DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameUserPtr(m_pVulkanFunctions);
 
 DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
