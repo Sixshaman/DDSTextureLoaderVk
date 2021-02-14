@@ -3,9 +3,7 @@ A cross-platform lightweight DDS texture loader for Vulkan. Based on Microsoft's
 
 No function allocates the memory required for images, since different developers may organize their image memory layout differently. The developer is expected to call `vkBindImageMemory` to allocate the memory for the image.  
 
-The function only creates a `VkImage` object and loads the data from the disk. To use the loaded data in the application, the developer is expected to manually upload the data into intermediate buffer and then issue a `vkCmdCopyBufferToImage` command.  
-
-Wasn't tested yet.  
+The function only creates a `VkImage` object and loads the data from the disk. To use the loaded data in the application, the developer is expected to manually upload the data into intermediate buffer and then issue a `vkCmdCopyBufferToImage`-like command.  
 
 ## Functions
 ### LoadDDSTextureFromMemory
@@ -74,22 +72,72 @@ Parameters:
 * `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
 * `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
+
 ## Debug object names
-Similar to DDSTextureLoader, this loader may assign debug object names in the debug mode. Because it requires enabling `VK_EXT_debug_utils` extension, it's disabled by default. To enable debug object labels, define `USE_VK_DEBUG_NAME`.
+Similar to DDSTextureLoader, this loader may assign debug object names in the debug mode. It's only enabled if `VK_EXT_debug_utils` extension is defined and `NO_VK_DEBUG_NAME` is not defined.
+
 
 ## SAL
 Unlike DDSTextureLoader, this loader does not use SAL. This is to make the loader cross-platform.
+
 
 ## Queue family ownership
 This loader creates the images on the default queue family (`queueFamilyIndexCount = 0`, `pQueueFamilyIndices = nullptr`). The developer is expected to issue `vkCmdPipelineBarrier` command to transfer the queue family ownership if needed.
 
 `VK_SHARING_MODE_CONCURRENT` is currently not supported.
 
+
 ## Using VK_NO_PROTOTYPES
-If the developer uses `VK_NO_PROTOTYPES`, they are expected to include their own prototype definitions in DDSVulkanFunctionsInclude.h.
+If the developer uses `VK_NO_PROTOTYPES`, they are expected to manually set the necessary dynamically loaded functions. These functions must be called before any other function from the library. 
+
+### SetVkCreateImageFuncPtr
+Use this function to set the pointer for dynamically loaded `vkCreateImage()` function. Example:
+```
+DDSTextureLoaderVk::SetVkCreateImageFuncPtr(vkCreateImage); //vkCreateImage was loaded dynamically
+DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
+```
+
+### SetVkCreateImageFuncPtrWithUserPtr and SetVkCreateImageUserPtr
+Use these functions if `vkCreateImage()` is defined as a class member (i.e. `QVulkanFunctions`, `vk::DispatchLoaderDynamic`) or requires additional data to call.  
+
+Example:
+```
+	DDSTextureLoaderVk::SetVkCreateImageFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage)
+	{
+		return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkCreateImage(device, pCreateInfo, pAllocator, pImage);
+	});
+DDSTextureLoaderVk::SetVkCreateImageUserPtr(m_pVulkanFunctions);
+
+DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
+```
+
+### SetVkSetDebugUtilsObjectNameFuncPtr
+Use this function to set the pointer for dynamically loaded `vkSetDebugUtilsObjectNameEXT()` function. Example:
+```
+DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtr(vkSetDebugUtilsObjectNameEXT); //vkSetDebugUtilsObjectNameEXT was loaded dynamically
+DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
+```
+
+### SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr and SetVkSetDebugUtilsObjectNameUserPtr
+Use these functions if `vkSetDebugUtilsObjectNameEXT()` is defined as a class member (i.e. `QVulkanFunctions`, `vk::DispatchLoaderDynamic`) or requires additional data to call.  
+
+Example:
+```
+	DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo)
+	{
+		return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkSetDebugUtilsObjectNameEXT(device, pNameInfo);
+	});
+DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameUserPtr(m_pVulkanFunctions);
+
+DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
+```
+
+If `VK_NO_PROTOTYPES` is defined, it's mandatory to call either `SetVkCreateImageFuncPtr()` or `SetVkCreateImageFuncPtrWithUserPtr()`+`SetVkCreateImageUserPtr()`. Calling debug object name function setters is only needed if the developer wants to set debug object names. If these functions are not defined, the library omits setting debug object names.
+
 
 ## VkResult error codes
 Since VkResult lacks the diversity of `HRESULT` error codes, this loader prints warning messages to the Visual Studio console (under Windows) or to stdio console (under Linux) in debug builds, to make the developer see what's gone wrong. To disable thos behavior, define `DDS_NO_ISSUE_LOGGING`.
+
 
 ## Format support
 * This loader does not support all packed D32S8X24 formats. The reason for this is that Direct3D uses 64-bit stride and Vulkan uses 40-bit stride for these formats.
@@ -118,6 +166,7 @@ Since VkResult lacks the diversity of `HRESULT` error codes, this loader prints 
   * `DXGI_FORMAT_V408`
 * This loader DOES support compressed BC formats, `DXGI_FORMAT_R8G8_B8G8_UNORM` and `DXGI_FORMAT_G8R8_G8B8_UNORM`. See **padding** section for more details.
 * This loader DOES support `DXGI_FORMAT_B4G4R4A4_UNORM` format, but only if `VK_EXT_4444_formats` extension is provided.
+
 
 ## Padding
 Since Vulkan expects `bufferRowLength` and `bufferImageHeight` to be in texels instead of bytes, it's currently impossible in this loader to load 3-byte RGB images with 4-byte padding.
