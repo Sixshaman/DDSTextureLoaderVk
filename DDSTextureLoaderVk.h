@@ -12,6 +12,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -75,8 +76,60 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         DDS_LOADER_MIP_RESERVE = 0x8,
     };
 
+    enum DDS_LOADER_RESULT: uint32_t
+    {
+        DDS_LOADER_SUCCESS             = 0,  //Everything is fine. Corresponds to S_OK hresult value
+        DDS_LOADER_FAIL                = 1,  //General error. Corresponds to E_FAIL hresult value
+        DDS_LOADER_BAD_POINTER         = 2,  //Invalid pointer has been passed. Corresponds to E_POINTER hresult value
+        DDS_LOADER_INVALID_ARG         = 3,  //Invalid argument has been passed. Corresponds to E_INVALIDARG hresult value
+        DDS_LOADER_INVALID_DATA        = 4,  //Invalid data in the file
+        DDS_LOADER_UNEXPECTED_EOF      = 5,  //Unexpected end of file
+        DDS_LOADER_UNSUPPORTED_FORMAT  = 6,  //DDS file's format is unsupported by the loader
+        DDS_LOADER_UNSUPPORTED_LAYOUT  = 7,  //DDS file's layout is invalid/unsupported by the loader (unknown image type, it's a 3D texture array, etc.)
+        DDS_LOADER_BELOW_LIMITS        = 8,  //Image size is bigger than device limits
+        DDS_LOADER_NO_HOST_MEMORY      = 9,  //Not enough system memory to create image handle
+        DDS_LOADER_NO_DEVICE_MEMORY    = 10,  //Not enough video memory to create image handle
+        DDS_LOADER_NO_FUNCTION         = 11, //The vkCreateImage() function was not loaded
+        DDS_LOADER_ARITHMETIC_OVERFLOW = 12, //Arithmetic overflow over uint32_t capacity
+    };
+
+    std::string DDSLoaderResultToString(DDS_LOADER_RESULT errorCode)
+    {
+        switch (errorCode)
+        {
+        case DDSTextureLoaderVk::DDS_LOADER_SUCCESS:
+            return "Operation was successful.";
+        case DDSTextureLoaderVk::DDS_LOADER_FAIL:
+            return "Unexpected failure when reading the file.";
+        case DDSTextureLoaderVk::DDS_LOADER_BAD_POINTER:
+            return "Incorrect pointer has been passed to the function.";
+        case DDSTextureLoaderVk::DDS_LOADER_INVALID_ARG:
+            return "Incorrect argument has been passed to the function.";
+        case DDSTextureLoaderVk::DDS_LOADER_INVALID_DATA:
+            return "File contains invalid information.";
+        case DDSTextureLoaderVk::DDS_LOADER_UNEXPECTED_EOF:
+            return "Unexpected end of file.";
+        case DDSTextureLoaderVk::DDS_LOADER_UNSUPPORTED_FORMAT:
+            return "The image has unsupported format.";
+        case DDSTextureLoaderVk::DDS_LOADER_UNSUPPORTED_LAYOUT:
+            return "The image has incorrect or unsupported layout.";
+        case DDSTextureLoaderVk::DDS_LOADER_BELOW_LIMITS:
+            return "The image dimensions exceed the given device limits. Note that if you don't pass VkPhysicalDeviceLimits* parameter, the limits are set to minimum possible.";
+        case DDSTextureLoaderVk::DDS_LOADER_NO_HOST_MEMORY:
+            return "Out of system memory.";
+        case DDSTextureLoaderVk::DDS_LOADER_NO_DEVICE_MEMORY:
+            return "Out of video memory.";
+        case DDSTextureLoaderVk::DDS_LOADER_NO_FUNCTION:
+            return "The function vkCreateImage() has not been loaded. Please use SetVkCreateImageFuncPtr() or SetVkCreateImageFuncPtrWithUserPtr()+SetVkCreateImageUserPtr() to pass the function to the loader.";
+        case DDSTextureLoaderVk::DDS_LOADER_ARITHMETIC_OVERFLOW:
+            return "Unexpected arithmetic overflow when reading the file.";
+        default:
+            return "Unknown error code.";
+        }
+    }
+
     // Standard version
-    VkResult __cdecl LoadDDSTextureFromMemory(
+    DDS_LOADER_RESULT __cdecl LoadDDSTextureFromMemory(
         VkDevice vkDevice,
         const uint8_t* ddsData,
         size_t ddsDataSize,
@@ -87,7 +140,7 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 
-    VkResult __cdecl LoadDDSTextureFromFile(
+    DDS_LOADER_RESULT __cdecl LoadDDSTextureFromFile(
         VkDevice vkDevice,
         const char_type* fileName,
         VkImage* texture,
@@ -99,7 +152,7 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         bool* isCubeMap = nullptr);
 
     // Extended version
-    VkResult __cdecl LoadDDSTextureFromMemoryEx(
+    DDS_LOADER_RESULT __cdecl LoadDDSTextureFromMemoryEx(
         VkDevice vkDevice,
         const uint8_t* ddsData,
         size_t ddsDataSize,
@@ -115,7 +168,7 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 
-    VkResult __cdecl LoadDDSTextureFromFileEx(
+    DDS_LOADER_RESULT __cdecl LoadDDSTextureFromFileEx(
         VkDevice vkDevice,
         const char_type* fileName,
         size_t maxsize,
