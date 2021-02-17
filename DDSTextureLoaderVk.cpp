@@ -2289,6 +2289,40 @@ namespace
 #endif // VK_EXT_debug_utils
 #endif // VK_NO_PROTOTYPES
 
+std::string DDSLoaderResultToString(DDS_LOADER_RESULT errorCode)
+{
+    switch (errorCode)
+    {
+    case DDSTextureLoaderVk::DDS_LOADER_SUCCESS:
+        return "Operation was successful.";
+    case DDSTextureLoaderVk::DDS_LOADER_FAIL:
+        return "Unexpected failure when reading the file.";
+    case DDSTextureLoaderVk::DDS_LOADER_BAD_POINTER:
+        return "Incorrect pointer has been passed to the function.";
+    case DDSTextureLoaderVk::DDS_LOADER_INVALID_ARG:
+        return "Incorrect argument has been passed to the function.";
+    case DDSTextureLoaderVk::DDS_LOADER_INVALID_DATA:
+        return "File contains invalid information.";
+    case DDSTextureLoaderVk::DDS_LOADER_UNEXPECTED_EOF:
+        return "Unexpected end of file.";
+    case DDSTextureLoaderVk::DDS_LOADER_UNSUPPORTED_FORMAT:
+        return "The image has unsupported format.";
+    case DDSTextureLoaderVk::DDS_LOADER_UNSUPPORTED_LAYOUT:
+        return "The image has incorrect or unsupported layout.";
+    case DDSTextureLoaderVk::DDS_LOADER_BELOW_LIMITS:
+        return "The image dimensions exceed the given device limits. Note that if you don't pass VkPhysicalDeviceLimits* parameter, the limits are set to minimum possible.";
+    case DDSTextureLoaderVk::DDS_LOADER_NO_HOST_MEMORY:
+        return "Out of system memory.";
+    case DDSTextureLoaderVk::DDS_LOADER_NO_DEVICE_MEMORY:
+        return "Out of video memory.";
+    case DDSTextureLoaderVk::DDS_LOADER_NO_FUNCTION:
+        return "The function vkCreateImage() has not been loaded. Please use SetVkCreateImageFuncPtr() or SetVkCreateImageFuncPtrWithUserPtr()+SetVkCreateImageUserPtr() to pass the function to the loader.";
+    case DDSTextureLoaderVk::DDS_LOADER_ARITHMETIC_OVERFLOW:
+        return "Unexpected arithmetic overflow when reading the file.";
+    default:
+        return "Unknown error code.";
+    }
+}
 
 //--------------------------------------------------------------------------------------
 DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemory(
