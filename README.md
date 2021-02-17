@@ -135,8 +135,8 @@ DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 If `VK_NO_PROTOTYPES` is defined, it's mandatory to call either `SetVkCreateImageFuncPtr()` or `SetVkCreateImageFuncPtrWithUserPtr()`+`SetVkCreateImageUserPtr()`. Calling debug object name function setters is only needed if the developer wants to set debug object names. If these functions are not defined, the library omits setting debug object names.
 
 
-## VkResult error codes
-Since VkResult lacks the diversity of `HRESULT` error codes, this loader prints warning messages to the Visual Studio console (under Windows) or to stdio console (under Linux) in debug builds, to make the developer see what's gone wrong. To disable thos behavior, define `DDS_NO_ISSUE_LOGGING`.
+## Error codes
+This loader uses custom error codes, because `HRESULT` codes are valid only on Windows, and `VkResult` error codes are not diverse enough. Use `DDSLoaderResultToString()` function to transform error code to string.
 
 
 ## Format support
