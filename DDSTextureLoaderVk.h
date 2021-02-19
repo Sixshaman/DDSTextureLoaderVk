@@ -96,15 +96,23 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
 
     std::string DDSLoaderResultToString(DDS_LOADER_RESULT errorCode);
 
+    //Helper struct to describe an image subresource loaded by the loader
+    struct LoadedSubresourceData
+    {
+        const uint8_t*     PData;            //Pointer to the subresource data
+        size_t             DataByteSize;     //The size of the subresource data, in bytes
+        VkImageSubresource SubresourceSlice; //The slice (mip level, array layer, and possibly plane) of the subresource
+        VkExtent3D         Extent;           //The extent (width-height-depth) of the subresource
+    };
+
     // Standard version
     DDS_LOADER_RESULT __cdecl LoadDDSTextureFromMemory(
         VkDevice vkDevice,
         const uint8_t* ddsData,
         size_t ddsDataSize,
         VkImage* texture,
-        std::vector<VkBufferImageCopy>& subresources,
-        size_t maxsize,
-        size_t initialOffset,
+        std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
+        size_t maxsize = 0,
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 
@@ -112,10 +120,9 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         VkDevice vkDevice,
         const char_type* fileName,
         VkImage* texture,
-        std::vector<uint8_t>& ddsData,
-        std::vector<VkBufferImageCopy>& subresources,
-        size_t maxsize,
-        size_t initialOffset,
+        std::unique_ptr<uint8_t[]>& ddsData,
+        std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
+        size_t maxsize = 0,
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 
@@ -125,14 +132,13 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         const uint8_t* ddsData,
         size_t ddsDataSize,
         size_t maxsize,
-        size_t initialOffset,
         const VkPhysicalDeviceLimits* deviceLimits,
         VkImageUsageFlags usageFlags,
         VkImageCreateFlags createFlags,
         unsigned int loadFlags,
-        VkAllocationCallbacks* allocator,
+        VkAllocationCallbacks* allocationCallbacks,
         VkImage* texture,
-        std::vector<VkBufferImageCopy>& subresources,
+        std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 
@@ -140,15 +146,14 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         VkDevice vkDevice,
         const char_type* fileName,
         size_t maxsize,
-        size_t initialOffset,
         const VkPhysicalDeviceLimits* deviceLimits,
         VkImageUsageFlags usageFlags,
         VkImageCreateFlags createFlags,
         unsigned int loadFlags,
-        VkAllocationCallbacks* allocator,
+        VkAllocationCallbacks* allocationCallbacks,
         VkImage* texture,
-        std::vector<uint8_t>& ddsData,
-        std::vector<VkBufferImageCopy>& subresources,
+        std::unique_ptr<uint8_t[]>& ddsData,
+        std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
         DDS_ALPHA_MODE* alphaMode = nullptr,
         bool* isCubeMap = nullptr);
 }

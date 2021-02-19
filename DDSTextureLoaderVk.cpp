@@ -12,8 +12,10 @@
 
 #include <algorithm>
 #include <cassert>
-#include <fstream>
 #include <memory>
+#include <new>
+#include <fstream>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <debugapi.h>
@@ -62,11 +64,10 @@ struct DDS_PIXELFORMAT
     uint32_t    ABitMask;
 };
 
-#define DDS_FOURCC      0x00000004  // DDPF_FOURCC
-#define DDS_RGB         0x00000040  // DDPF_RGB
-#define DDS_LUMINANCE   0x00020000  // DDPF_LUMINANCE
-#define DDS_ALPHA       0x00000002  // DDPF_ALPHA
-#define DDS_BUMPDUDV    0x00080000  // DDPF_BUMPDUDV
+#define DDS_FOURCC        0x00000004  // DDPF_FOURCC
+#define DDS_RGB           0x00000040  // DDPF_RGB
+#define DDS_LUMINANCE     0x00020000  // DDPF_LUMINANCE
+#define DDS_BUMPDUDV      0x00080000  // DDPF_BUMPDUDV
 
 #define DDS_HEADER_FLAGS_VOLUME         0x00800000  // DDSD_DEPTH
 
@@ -194,6 +195,8 @@ namespace
             return DDS_LOADER_BAD_POINTER;
         }
 
+        *bitSize = 0;
+
         if (ddsDataSize > UINT32_MAX)
         {
             return DDS_LOADER_FAIL;
@@ -226,7 +229,7 @@ namespace
             (MAKEFOURCC('D', 'X', '1', '0') == hdr->ddspf.fourCC))
         {
             // Must be long enough for both headers and magic value
-            if (ddsDataSize < (sizeof(DDS_HEADER) + sizeof(uint32_t) + sizeof(DDS_HEADER_DXT10)))
+            if (ddsDataSize < (sizeof(uint32_t) + sizeof(DDS_HEADER) + sizeof(DDS_HEADER_DXT10)))
             {
                 return DDS_LOADER_FAIL;
             }
@@ -249,7 +252,7 @@ namespace
     //--------------------------------------------------------------------------------------
     DDS_LOADER_RESULT LoadTextureDataFromFile(
         const char_type* fileName,
-        std::vector<uint8_t>& ddsData,
+        std::unique_ptr<uint8_t[]>& ddsData,
         const DDS_HEADER** header,
         const uint8_t** bitData,
         size_t* bitSize) noexcept
@@ -259,67 +262,57 @@ namespace
             return DDS_LOADER_BAD_POINTER;
         }
 
-        // open the file
-        std::ifstream hFile(fileName, std::ios::binary);
-        if(!hFile)
-        {
+        *bitSize = 0;
+
+        std::ifstream inFile(std::filesystem::path(fileName), std::ios::in | std::ios::binary | std::ios::ate);
+        if (!inFile)
             return DDS_LOADER_FAIL;
-        }
 
-        // Get the file size
-        std::streampos fileBegin = hFile.tellg();
-        hFile.seekg(0, std::ios::end);
-        std::streampos fileEnd = hFile.tellg();
-        hFile.seekg(0, std::ios::beg);
-
-        size_t fileSize = fileEnd - fileBegin;
-        
-        uint32_t fileSizeHighPart = (uint32_t)(uint64_t(fileSize & 0xffffffff00000000ull) >> 32);
-        uint32_t fileSizeLowPart  = (uint32_t)(uint64_t(fileSize & 0x00000000ffffffffull) >>  0);
-
-        // File is too big for 32-bit allocation, so reject read
-        if(fileSizeHighPart > 0)
-        {
+        std::streampos fileLen = inFile.tellg();
+        if (!inFile)
             return DDS_LOADER_FAIL;
-        }
 
         // Need at least enough data to fill the header and magic number to be a valid DDS
-        if(fileSizeLowPart < (sizeof(DDS_HEADER) + sizeof(uint32_t)))
+        if (fileLen < (sizeof(uint32_t) + sizeof(DDS_HEADER)))
+            return DDS_LOADER_FAIL;
+
+        ddsData.reset(new (std::nothrow) uint8_t[size_t(fileLen)]);
+        if (!ddsData)
+            return DDS_LOADER_FAIL;
+
+        inFile.seekg(0, std::ios::beg);
+        if (!inFile)
         {
+            ddsData.reset();
             return DDS_LOADER_FAIL;
         }
 
-        // create enough space for the file data
-        ddsData.clear();
-        ddsData.resize(fileSizeLowPart);
+       inFile.read(reinterpret_cast<char*>(ddsData.get()), fileLen);
+       if (!inFile)
+       {
+           ddsData.reset();
+           return DDS_LOADER_FAIL;
+       }
 
-        // read the data in
-        hFile.read((char*)ddsData.data(), fileSizeLowPart);
-        uint32_t BytesRead = (uint32_t)hFile.gcount();
+       inFile.close();
 
-        if(hFile.bad())
-        {
-            return DDS_LOADER_FAIL;
-        }
-
-        if (BytesRead < fileSizeLowPart)
-        {
-            return DDS_LOADER_FAIL;
-        }
+       size_t len = fileLen;
 
         // DDS files always start with the same magic number ("DDS ")
-        auto dwMagicNumber = *reinterpret_cast<const uint32_t*>(ddsData.data());
+        auto dwMagicNumber = *reinterpret_cast<const uint32_t*>(ddsData.get());
         if (dwMagicNumber != DDS_MAGIC)
         {
+            ddsData.reset();
             return DDS_LOADER_FAIL;
         }
 
-        auto hdr = reinterpret_cast<const DDS_HEADER*>(ddsData.data() + sizeof(uint32_t));
+        auto hdr = reinterpret_cast<const DDS_HEADER*>(ddsData.get() + sizeof(uint32_t));
 
         // Verify header to validate DDS file
         if (hdr->size != sizeof(DDS_HEADER) ||
             hdr->ddspf.size != sizeof(DDS_PIXELFORMAT))
         {
+            ddsData.reset();
             return DDS_LOADER_FAIL;
         }
 
@@ -329,8 +322,9 @@ namespace
             (MAKEFOURCC('D', 'X', '1', '0') == hdr->ddspf.fourCC))
         {
             // Must be long enough for both headers and magic value
-            if (fileSizeLowPart < (sizeof(DDS_HEADER) + sizeof(uint32_t) + sizeof(DDS_HEADER_DXT10)))
+            if (len < (sizeof(uint32_t) + sizeof(DDS_HEADER) + sizeof(DDS_HEADER_DXT10)))
             {
+                ddsData.reset();
                 return DDS_LOADER_FAIL;
             }
 
@@ -341,8 +335,8 @@ namespace
         *header = hdr;
         auto offset = sizeof(uint32_t) + sizeof(DDS_HEADER)
             + (bDXT10Header ? sizeof(DDS_HEADER_DXT10) : 0);
-        *bitData = ddsData.data() + offset;
-        *bitSize = fileSizeLowPart - offset;
+        *bitData = ddsData.get() + offset;
+        *bitSize = len - offset;
 
         return DDS_LOADER_SUCCESS;
     }
@@ -469,20 +463,20 @@ namespace
             return VK_FORMAT_R32G32_SINT;
 
         case 19: //DXGI_FORMAT_R32G8X24_TYPELESS
-            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride. The current version does not support this format.
+            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses (optional) 40-bit stride.
             return VK_FORMAT_UNDEFINED;
 
         case 20: //DXGI_FORMAT_D32_FLOAT_S8X24_UINT
-            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride. The current version does not support this format.
+            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride.
             return VK_FORMAT_UNDEFINED;
 
         case 21: //DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
             //It's possible to return R32G32 here and it will work for the red component, but only with manually not using the green component. It may be not a desired use case.
-            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride. The current version does not support this format.
+            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride.
             return VK_FORMAT_UNDEFINED;
 
         case 22: //DXGI_FORMAT_X32_TYPELESS_G8X24_UINT
-            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride. The current version does not support this format.
+            //D32S8 format has different packing rules in Direct3D and Vulkan. Direct3D uses 64-bit stride and Vulkan uses 40-bit stride.
             return VK_FORMAT_UNDEFINED;
 
         case 23: //DXGI_FORMAT_R10G10B10A2_TYPELESS
@@ -495,7 +489,6 @@ namespace
             return VK_FORMAT_A2B10G10R10_UINT_PACK32;
 
         case 26: //DXGI_FORMAT_R11G11B10_FLOAT
-            //DXGI_FORMAT uses different ordering naming convention for some reason, but both APIs store R-component in lower bits and B-component in higher bits.
             return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
 
         case 27: //DXGI_FORMAT_R8G8B8A8_TYPELESS
@@ -556,11 +549,9 @@ namespace
             return VK_FORMAT_D24_UNORM_S8_UINT;
 
         case 46: //DXGI_FORMAT_R24_UNORM_X8_TYPELESS
-            //R24X8 format: separate depth-stencil attachments are not yet supported in this loader.
             return VK_FORMAT_UNDEFINED;
 
         case 47: //DXGI_FORMAT_X24_TYPELESS_G8_UINT
-            //"X24G8 format: separate depth-stencil attachments are not yet supported in this loader.
             return VK_FORMAT_UNDEFINED;
 
         case 48: //DXGI_FORMAT_R8G8_TYPELESS
@@ -615,7 +606,6 @@ namespace
             return VK_FORMAT_R8_SINT;
 
         case 65: //DXGI_FORMAT_A8_UNORM
-            //It's possible to return VK_FORMAT_R8_UNORM, but it's probably not what the user wants.
             //A8 format is not supported in Vulkan.
             return VK_FORMAT_UNDEFINED;
 
@@ -624,7 +614,6 @@ namespace
             return VK_FORMAT_UNDEFINED;
 
         case 67: //DXGI_FORMAT_R9G9B9E5_SHAREDEXP
-            //Again, DXGI_FORMAT uses different ordering naming convention, but both APIs store R-component in lower bits, B-component in higher bits and exponent in the highest bits.
  			return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
 
 #if defined(VK_VERSION_1_1) && VK_VERSION_1_1
@@ -707,8 +696,7 @@ namespace
             return VK_FORMAT_UNDEFINED;
 
         case 89: //DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM
-            //Vulkan does not support XR biased formats
-            //R10F10B10A2 biased format is not supported in Vulkan.
+            //Vulkan does not support XR biased formats.
             return VK_FORMAT_UNDEFINED;
 
         case 90: //DXGI_FORMAT_B8G8R8A8_TYPELESS
@@ -744,110 +732,112 @@ namespace
             return VK_FORMAT_BC7_SRGB_BLOCK;
 
         case 100: //DXGI_FORMAT_AYUV
-            //DXGI_FORMAT_R8G8B8A8_UNORM is a valid view format for AYUV data, but the user may not want that
-            //AYUV format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //DXGI_FORMAT_R8G8B8A8_UNORM is a valid view format for AYUV data. We use a corresponding format here
+            return VK_FORMAT_R8G8B8A8_UNORM;
 
         case 101: //DXGI_FORMAT_Y410
-            //DXGI_FORMAT_R10G10B10A2_UNORM is a valid view format for Y410 data, but the user may not want that
-            //Y410 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //DXGI_FORMAT_R10G10B10A2_UNORM is a valid view format for Y410 data. We use a corresponding format here
+            return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 
         case 102: //DXGI_FORMAT_Y416
-            //DXGI_FORMAT_R16G16B16A16_UNORM is a valid view format for Y416 data, but the user may not want that
-            //Y416 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //DXGI_FORMAT_R16G16B16A16_UNORM is a valid view format for Y416 data. We use a corresponding format here
+            return VK_FORMAT_R16G16B16A16_UNORM;
 
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
         case 103: //DXGI_FORMAT_NV12
-            //DXGI_FORMAT_R8_UNORM is a valid view format for NV12 data, but the user may not want that
-            //NV12 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Multi-planar 4:2:0 8-bit per channel format
+            return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
 
         case 104: //DXGI_FORMAT_P010
-            //DXGI_FORMAT_R16_UNORM is a valid view format for P010 data, but the user may not want that
-            //P010 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Multi-planar 4:2:0 10X6-bit per channel format
+            return VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
 
         case 105: //DXGI_FORMAT_P016
-            //DXGI_FORMAT_R16_UNORM is a valid view format for P016 data, but the user may not want that
-            //P016 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Multi-planar 4:2:0 16-bit per channel format
+            return VK_FORMAT_G16_B16R16_2PLANE_420_UNORM;
 
         case 106: //DXGI_FORMAT_420_OPAQUE
-            //420 OPAQUE format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Multi-planar 4:2:0 8-bit per channel format
+            return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
 
         case 107: //DXGI_FORMAT_YUY2
-            //DXGI_FORMAT_R8G8B8A8_UNORM is a valid view format for YUV2 data, but the user may not want that
-            //YUV2 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Packed 4:2:2 8-bit per channel format
+            return VK_FORMAT_G8B8G8R8_422_UNORM;
 
         case 108: //DXGI_FORMAT_Y210
-            //DXGI_FORMAT_R16G16B16A16_UNORM is a valid view format for Y210 data, but the user may not want that
-            //Y210 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Packed 4:2:2 10X6-bit per channel format
+            return VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16;
 
         case 109: //DXGI_FORMAT_Y216
-            //DXGI_FORMAT_R16G16B16A16_UNORM is a valid view format for Y216 data, but the user may not want that
-            //Y216 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Packed 4:2:2 16-bit per channel format
+            return VK_FORMAT_G16B16G16R16_422_UNORM;
+
+#elif defined(VK_KHR_sampler_ycbcr_conversion)
+        case 103: //DXGI_FORMAT_NV12
+            //Multi-planar 4:2:0 8-bit per channel format
+            return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM_KHR;
+
+        case 104: //DXGI_FORMAT_P010
+            //Multi-planar 4:2:0 10X6-bit per channel format
+            return VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16_KHR;
+
+        case 105: //DXGI_FORMAT_P016
+            //Multi-planar 4:2:0 16-bit per channel format
+            return VK_FORMAT_G16_B16R16_2PLANE_420_UNORM_KHR;
+
+        case 106: //DXGI_FORMAT_420_OPAQUE
+            //Multi-planar 4:2:0 8-bit per channel format
+            return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM_KHR;
+
+        case 107: //DXGI_FORMAT_YUY2
+            //Packed 4:2:2 8-bit per channel format
+            return VK_FORMAT_G8B8G8R8_422_UNORM_KHR;
+
+        case 108: //DXGI_FORMAT_Y210
+            //Packed 4:2:2 10X6-bit per channel format
+            return VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16_KHR;
+
+        case 109: //DXGI_FORMAT_Y216
+            //Packed 4:2:2 16-bit per channel format
+            return VK_FORMAT_G16B16G16R16_422_UNORM_KHR;
+#endif
 
         case 110: //DXGI_FORMAT_NV11
-            //DXGI_FORMAT_R8_UNORM is a valid view format for NV11 data, but the user may not want that
-            //NV11 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan does not support 4:1:1 formats
             return VK_FORMAT_UNDEFINED;
 
         case 111: //DXGI_FORMAT_AI44
-            //AI44 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan does not support palletized formats
             return VK_FORMAT_UNDEFINED;
 
         case 112: //DXGI_FORMAT_IA44
-            //IA44 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan does not support palletized formats
             return VK_FORMAT_UNDEFINED;
 
         case 113: //DXGI_FORMAT_P8
-            //P8 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan does not support palletized formats
             return VK_FORMAT_UNDEFINED;
 
         case 114: //DXGI_FORMAT_A8P8
-            //A8P8 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan does not support palletized formats
             return VK_FORMAT_UNDEFINED;
 
-#ifdef VK_EXT_4444_formats
-
         case 115: //DXGI_FORMAT_B4G4R4A4_UNORM
-            return VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT;
+            return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
 
-#else
-
-        case 115: //DXGI_FORMAT_B4G4R4A4_UNORM
-            return VK_FORMAT_UNDEFINED;
-
-#endif
-
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
         case 130: //DXGI_FORMAT_P208
-            //P208 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
+            //Multi-planar 4:2:2 8-bit per channel format
+            return VK_FORMAT_G8_B8R8_2PLANE_422_UNORM;
 
         case 131: //DXGI_FORMAT_V208
-            //V208 format: packed YUV formats are not yet supported in this loader.
+            //Vulkan doesn't support 4:4 formats
             return VK_FORMAT_UNDEFINED;
 
         case 132: //DXGI_FORMAT_V408
-            //V408 format: packed YUV formats are not yet supported in this loader.
-            return VK_FORMAT_UNDEFINED;
-
-        case 189: //DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE
-            //DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE: Sampler feedback is not supported in this loader.
-            return VK_FORMAT_UNDEFINED;
-
-        case 190: //DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE
-            //DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE: Sampler feedback is not supported in this loader.
-            return VK_FORMAT_UNDEFINED;
-
-        case 0xffffffff: //DXGI_FORMAT_FORCE_UINT
-            //This value is never used
-            return VK_FORMAT_UNDEFINED;
+            //4:4:4 format
+            return VK_FORMAT_R8G8B8A8_UNORM;
+#endif
 
         default:
             //Unknown format.
@@ -1176,80 +1166,164 @@ namespace
     }
 
     //--------------------------------------------------------------------------------------
-    // Return the BPP for a particular format
+    // Return the (rounded up multiple of 8) BPP for a particular format
     //--------------------------------------------------------------------------------------
     size_t BitsPerPixel(VkFormat fmt) noexcept
     {
-        switch( fmt )
+        // Some of the formats (such as VK_FORMAT_ASTC_5x5_SRGB_BLOCK) have fractional BPP. 
+        // This function rounds them up to the closest power of 2.
+
+        switch (fmt)
         {
-        case VK_FORMAT_R32G32B32A32_SFLOAT:
+        case VK_FORMAT_R64G64B64A64_UINT:
+        case VK_FORMAT_R64G64B64A64_SINT:
+        case VK_FORMAT_R64G64B64A64_SFLOAT:
+            return 256;
+
+        case VK_FORMAT_R64G64B64_UINT:
+        case VK_FORMAT_R64G64B64_SINT:
+        case VK_FORMAT_R64G64B64_SFLOAT:
+            return 192;
+
         case VK_FORMAT_R32G32B32A32_UINT:
         case VK_FORMAT_R32G32B32A32_SINT:
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+        case VK_FORMAT_R64G64_UINT:
+        case VK_FORMAT_R64G64_SINT:
+        case VK_FORMAT_R64G64_SFLOAT:
             return 128;
 
-        case VK_FORMAT_R32G32B32_SFLOAT:
         case VK_FORMAT_R32G32B32_UINT:
         case VK_FORMAT_R32G32B32_SINT:
+        case VK_FORMAT_R32G32B32_SFLOAT:
             return 96;
 
-        case VK_FORMAT_R16G16B16A16_SFLOAT:
         case VK_FORMAT_R16G16B16A16_UNORM:
-        case VK_FORMAT_R16G16B16A16_UINT:
         case VK_FORMAT_R16G16B16A16_SNORM:
+        case VK_FORMAT_R16G16B16A16_USCALED:
+        case VK_FORMAT_R16G16B16A16_SSCALED:
+        case VK_FORMAT_R16G16B16A16_UINT:
         case VK_FORMAT_R16G16B16A16_SINT:
-        case VK_FORMAT_R32G32_SFLOAT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
         case VK_FORMAT_R32G32_UINT:
         case VK_FORMAT_R32G32_SINT:
+        case VK_FORMAT_R32G32_SFLOAT:
+        case VK_FORMAT_R64_UINT:
+        case VK_FORMAT_R64_SINT:
+        case VK_FORMAT_R64_SFLOAT:
             return 64;
 
-        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-        case VK_FORMAT_A2B10G10R10_UINT_PACK32:
-        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+        case VK_FORMAT_R16G16B16_UNORM:
+        case VK_FORMAT_R16G16B16_SNORM:
+        case VK_FORMAT_R16G16B16_USCALED:
+        case VK_FORMAT_R16G16B16_SSCALED:
+        case VK_FORMAT_R16G16B16_UINT:
+        case VK_FORMAT_R16G16B16_SINT:
+        case VK_FORMAT_R16G16B16_SFLOAT:
+            return 48;
+
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+            return 40;
+
         case VK_FORMAT_R8G8B8A8_UNORM:
-        case VK_FORMAT_R8G8B8A8_SRGB:
-        case VK_FORMAT_R8G8B8A8_UINT:
         case VK_FORMAT_R8G8B8A8_SNORM:
+        case VK_FORMAT_R8G8B8A8_USCALED:
+        case VK_FORMAT_R8G8B8A8_SSCALED:
+        case VK_FORMAT_R8G8B8A8_UINT:
         case VK_FORMAT_R8G8B8A8_SINT:
-        case VK_FORMAT_R16G16_SFLOAT:
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_UNORM:
+        case VK_FORMAT_B8G8R8A8_SNORM:
+        case VK_FORMAT_B8G8R8A8_USCALED:
+        case VK_FORMAT_B8G8R8A8_SSCALED:
+        case VK_FORMAT_B8G8R8A8_UINT:
+        case VK_FORMAT_B8G8R8A8_SINT:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+        case VK_FORMAT_A8B8G8R8_SNORM_PACK32:
+        case VK_FORMAT_A8B8G8R8_USCALED_PACK32:
+        case VK_FORMAT_A8B8G8R8_SSCALED_PACK32:
+        case VK_FORMAT_A8B8G8R8_UINT_PACK32:
+        case VK_FORMAT_A8B8G8R8_SINT_PACK32:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_SNORM_PACK32:
+        case VK_FORMAT_A2R10G10B10_USCALED_PACK32:
+        case VK_FORMAT_A2R10G10B10_SSCALED_PACK32:
+        case VK_FORMAT_A2R10G10B10_UINT_PACK32:
+        case VK_FORMAT_A2R10G10B10_SINT_PACK32:
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+        case VK_FORMAT_A2B10G10R10_SNORM_PACK32:
+        case VK_FORMAT_A2B10G10R10_USCALED_PACK32:
+        case VK_FORMAT_A2B10G10R10_SSCALED_PACK32:
+        case VK_FORMAT_A2B10G10R10_UINT_PACK32:
+        case VK_FORMAT_A2B10G10R10_SINT_PACK32:
         case VK_FORMAT_R16G16_UNORM:
-        case VK_FORMAT_R16G16_UINT:
         case VK_FORMAT_R16G16_SNORM:
+        case VK_FORMAT_R16G16_USCALED:
+        case VK_FORMAT_R16G16_SSCALED:
+        case VK_FORMAT_R16G16_UINT:
         case VK_FORMAT_R16G16_SINT:
-        case VK_FORMAT_D32_SFLOAT:
-        case VK_FORMAT_R32_SFLOAT:
+        case VK_FORMAT_R16G16_SFLOAT:
         case VK_FORMAT_R32_UINT:
         case VK_FORMAT_R32_SINT:
-        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_R32_SFLOAT:
+        case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
         case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
-        case VK_FORMAT_G8B8G8R8_422_UNORM:
-        case VK_FORMAT_B8G8R8G8_422_UNORM:
-        case VK_FORMAT_B8G8R8A8_UNORM:
-        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_X8_D24_UNORM_PACK32:
+        case VK_FORMAT_D32_SFLOAT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
             return 32;
 
+        case VK_FORMAT_R8G8B8_UNORM:
+        case VK_FORMAT_R8G8B8_SNORM:
+        case VK_FORMAT_R8G8B8_USCALED:
+        case VK_FORMAT_R8G8B8_SSCALED:
+        case VK_FORMAT_R8G8B8_UINT:
+        case VK_FORMAT_R8G8B8_SINT:
+        case VK_FORMAT_R8G8B8_SRGB:
+        case VK_FORMAT_B8G8R8_UNORM:
+        case VK_FORMAT_B8G8R8_SNORM:
+        case VK_FORMAT_B8G8R8_USCALED:
+        case VK_FORMAT_B8G8R8_SSCALED:
+        case VK_FORMAT_B8G8R8_UINT:
+        case VK_FORMAT_B8G8R8_SINT:
+        case VK_FORMAT_B8G8R8_SRGB:
+        case VK_FORMAT_D16_UNORM_S8_UINT:
+            return 24;
+
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16:
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+        case VK_FORMAT_B5G6R5_UNORM_PACK16:
+        case VK_FORMAT_R5G5B5A1_UNORM_PACK16:
+        case VK_FORMAT_B5G5R5A1_UNORM_PACK16:
+        case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
         case VK_FORMAT_R8G8_UNORM:
-        case VK_FORMAT_R8G8_UINT:
         case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R8G8_USCALED:
+        case VK_FORMAT_R8G8_SSCALED:
+        case VK_FORMAT_R8G8_UINT:
         case VK_FORMAT_R8G8_SINT:
+        case VK_FORMAT_R8G8_SRGB:
+        case VK_FORMAT_R16_UNORM:
+        case VK_FORMAT_R16_SNORM:
+        case VK_FORMAT_R16_USCALED:
+        case VK_FORMAT_R16_SSCALED:
+        case VK_FORMAT_R16_UINT:
+        case VK_FORMAT_R16_SINT:
         case VK_FORMAT_R16_SFLOAT:
         case VK_FORMAT_D16_UNORM:
-        case VK_FORMAT_R16_UNORM:
-        case VK_FORMAT_R16_UINT:
-        case VK_FORMAT_R16_SNORM:
-        case VK_FORMAT_R16_SINT:
-        case VK_FORMAT_R5G6B5_UNORM_PACK16:
-        case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
             return 16;
 
-#ifdef VK_EXT_4444_formats
-        case VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT:
-            return 16;
-#endif
-
+        case VK_FORMAT_R4G4_UNORM_PACK8:
         case VK_FORMAT_R8_UNORM:
-        case VK_FORMAT_R8_UINT:
         case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R8_USCALED:
+        case VK_FORMAT_R8_SSCALED:
+        case VK_FORMAT_R8_UINT:
         case VK_FORMAT_R8_SINT:
+        case VK_FORMAT_R8_SRGB:
         case VK_FORMAT_BC2_UNORM_BLOCK:
         case VK_FORMAT_BC2_SRGB_BLOCK:
         case VK_FORMAT_BC3_UNORM_BLOCK:
@@ -1260,18 +1334,200 @@ namespace
         case VK_FORMAT_BC6H_SFLOAT_BLOCK:
         case VK_FORMAT_BC7_UNORM_BLOCK:
         case VK_FORMAT_BC7_SRGB_BLOCK:
+        case VK_FORMAT_EAC_R11G11_UNORM_BLOCK:
+        case VK_FORMAT_EAC_R11G11_SNORM_BLOCK:
+        case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_4x4_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_5x4_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_5x4_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_5x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_5x5_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_6x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_6x5_SRGB_BLOCK:
+        case VK_FORMAT_S8_UINT:
             return 8;
 
-        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
-        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
         case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
         case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+        case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
         case VK_FORMAT_BC4_UNORM_BLOCK:
         case VK_FORMAT_BC4_SNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK:
+        case VK_FORMAT_EAC_R11_UNORM_BLOCK:
+        case VK_FORMAT_EAC_R11_SNORM_BLOCK:
+        case VK_FORMAT_ASTC_6x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_6x6_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_8x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x5_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_8x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x6_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_10x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x5_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_10x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x6_SRGB_BLOCK:
             return 4;
 
+        case VK_FORMAT_ASTC_8x8_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x8_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_10x8_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x8_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_10x10_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x10_SRGB_BLOCK:
+        case VK_FORMAT_ASTC_12x10_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_12x10_SRGB_BLOCK:
+            return 2;
+
+        case VK_FORMAT_ASTC_12x12_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_12x12_SRGB_BLOCK:
+            return 1;
+
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
+        case VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16:
+        case VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16:
+        case VK_FORMAT_B10X6G10X6R10X6G10X6_422_UNORM_4PACK16:
+        case VK_FORMAT_R12X4G12X4B12X4A12X4_UNORM_4PACK16:
+        case VK_FORMAT_G12X4B12X4G12X4R12X4_422_UNORM_4PACK16:
+        case VK_FORMAT_B12X4G12X4R12X4G12X4_422_UNORM_4PACK16:
+        case VK_FORMAT_G16B16G16R16_422_UNORM:
+        case VK_FORMAT_B16G16R16G16_422_UNORM:
+            return 64;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_444_UNORM:
+            return 48;
+
+        case VK_FORMAT_G8B8G8R8_422_UNORM:
+        case VK_FORMAT_B8G8R8G8_422_UNORM:
+        case VK_FORMAT_R10X6G10X6_UNORM_2PACK16:
+        case VK_FORMAT_R12X4G12X4_UNORM_2PACK16:
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_422_UNORM:
+        case VK_FORMAT_G16_B16R16_2PLANE_422_UNORM:
+            return 32;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM:
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_420_UNORM:
+        case VK_FORMAT_G16_B16R16_2PLANE_420_UNORM:
+            return 24;
+
+        case VK_FORMAT_R10X6_UNORM_PACK16:
+        case VK_FORMAT_R12X4_UNORM_PACK16:
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM:
+            return 16;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
+            return 12;
+#endif
+
+#ifdef VK_IMG_format_pvrtc
+        case VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG:
+            return 4;
+
+        case VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG:
+            return 2;
+#endif
+
+#ifdef VK_EXT_texture_compression_astc_hdr
+        case VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_5x4_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_5x5_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_6x5_SFLOAT_BLOCK_EXT:
+            return 8;
+
+        case VK_FORMAT_ASTC_6x6_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_8x5_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_8x6_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_10x5_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_10x6_SFLOAT_BLOCK_EXT:
+            return 4;
+
+        case VK_FORMAT_ASTC_8x8_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_10x8_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_10x10_SFLOAT_BLOCK_EXT:
+        case VK_FORMAT_ASTC_12x10_SFLOAT_BLOCK_EXT:
+            return 2;
+
+        case VK_FORMAT_ASTC_12x12_SFLOAT_BLOCK_EXT:
+            return 1;
+#endif
+
+#ifdef VK_EXT_4444_formats
+        case VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT:
+        case VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT:
+            return 16;
+#endif
+
+#if (!defined(VK_VERSION_1_1) || !VK_VERSION_1_1) && defined(VK_KHR_sampler_ycbcr_conversion)
+        case VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16_KHR:
+        case VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_B10X6G10X6R10X6G10X6_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_R12X4G12X4B12X4A12X4_UNORM_4PACK16_KHR:
+        case VK_FORMAT_G12X4B12X4G12X4R12X4_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_B12X4G12X4R12X4G12X4_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_G16B16G16R16_422_UNORM_KHR:
+        case VK_FORMAT_B16G16R16G16_422_UNORM_KHR:
+            return 64;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_444_UNORM_KHR:
+            return 48;
+
+        case VK_FORMAT_G8B8G8R8_422_UNORM_KHR:
+        case VK_FORMAT_B8G8R8G8_422_UNORM_KHR:
+        case VK_FORMAT_R10X6G10X6_UNORM_2PACK16_KHR:
+        case VK_FORMAT_R12X4G12X4_UNORM_2PACK16_KHR:
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_422_UNORM_KHR:
+        case VK_FORMAT_G16_B16R16_2PLANE_422_UNORM_KHR:
+            return 32;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM_KHR:
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_420_UNORM_KHR:
+        case VK_FORMAT_G16_B16R16_2PLANE_420_UNORM_KHR:
+            return 24;
+
+        case VK_FORMAT_R10X6_UNORM_PACK16_KHR:
+        case VK_FORMAT_R12X4_UNORM_PACK16_KHR:
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM_KHR:
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM_KHR:
+            return 16;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM_KHR:
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM_KHR:
+            return 12;
+#endif
+
         default:
-            //Unsupported/Not implemented Vulkan format.;
             return 0;
         }
     }
@@ -1283,24 +1539,40 @@ namespace
         size_t width,
         size_t height,
         VkFormat fmt,
-        size_t* outNumBytes) noexcept
+        VkImageAspectFlags aspectPlane,
+        size_t* outNumBytes,
+        size_t* outRowBytes,
+        size_t* outNumRows) noexcept
     {
         uint64_t numBytes = 0;
+        uint64_t rowBytes = 0;
+        uint64_t numRows  = 0;
 
-        bool bc = false;
-        bool packed = false;
-        bool planar = false;
-        size_t bpe = 0;
-        switch (fmt)
+        bool     is2PlaneFormat = false;
+        bool     is3PlaneFormat = false;
+        bool     isPackedFormat = false;
+        bool     isBlockFormat  = false;
+        uint32_t blockWidth     = 0;
+        uint32_t blockHeight    = 0;
+        size_t   bytesPerBlock  = 0;
+        switch(fmt)
         {
         case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
-        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
         case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
+        case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
         case VK_FORMAT_BC1_RGBA_SRGB_BLOCK:
-        case VK_FORMAT_BC4_SNORM_BLOCK:
         case VK_FORMAT_BC4_UNORM_BLOCK:
-            bc = true;
-            bpe = 8;
+        case VK_FORMAT_BC4_SNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK:
+        case VK_FORMAT_EAC_R11_UNORM_BLOCK:
+        case VK_FORMAT_EAC_R11_SNORM_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 4;
+            blockHeight   = 4;
+            bytesPerBlock = 8;
             break;
 
         case VK_FORMAT_BC2_UNORM_BLOCK:
@@ -1313,60 +1585,587 @@ namespace
         case VK_FORMAT_BC6H_SFLOAT_BLOCK:
         case VK_FORMAT_BC7_UNORM_BLOCK:
         case VK_FORMAT_BC7_SRGB_BLOCK:
-            bc = true;
-            bpe = 16;
+        case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
+        case VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK:
+        case VK_FORMAT_EAC_R11G11_UNORM_BLOCK:
+        case VK_FORMAT_EAC_R11G11_SNORM_BLOCK:
+        case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_4x4_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 4;
+            blockHeight   = 4;
+            bytesPerBlock = 16;
             break;
 
+        case VK_FORMAT_ASTC_5x4_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_5x4_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 5;
+            blockHeight   = 4;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_5x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_5x5_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 5;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_6x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_6x5_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 6;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_6x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_6x6_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 6;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x5_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x6_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x8_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_8x8_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 8;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x5_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x5_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x6_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x6_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x8_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x8_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 8;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x10_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_10x10_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 10;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_12x10_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_12x10_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 12;
+            blockHeight   = 10;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_12x12_UNORM_BLOCK:
+        case VK_FORMAT_ASTC_12x12_SRGB_BLOCK:
+            isBlockFormat = true;
+            blockWidth    = 12;
+            blockHeight   = 12;
+            bytesPerBlock = 16;
+            break;
+
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
         case VK_FORMAT_G8B8G8R8_422_UNORM:
         case VK_FORMAT_B8G8R8G8_422_UNORM:
-            packed = true;
-            bpe = 4;
+            isPackedFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
             break;
 
+        case VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16:
+        case VK_FORMAT_B10X6G10X6R10X6G10X6_422_UNORM_4PACK16:
+        case VK_FORMAT_G12X4B12X4G12X4R12X4_422_UNORM_4PACK16:
+        case VK_FORMAT_B12X4G12X4R12X4G12X4_422_UNORM_4PACK16:
+        case VK_FORMAT_G16B16G16R16_422_UNORM:
+        case VK_FORMAT_B16G16R16G16_422_UNORM:
+            isPackedFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
+            is2PlaneFormat = true;
+            blockWidth      = 2;
+            blockHeight     = 2;
+            bytesPerBlock   = 6;
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16R16_2PLANE_420_UNORM:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 12;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16R16_2PLANE_422_UNORM:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 6;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 1;
+            blockHeight    = 1;
+            bytesPerBlock  = 3;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_420_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 12;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_422_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16:
+        case VK_FORMAT_G16_B16_R16_3PLANE_444_UNORM:
+            is3PlaneFormat = true;
+            blockWidth     = 1;
+            blockHeight    = 1;
+            bytesPerBlock  = 6;
+            break;
+#endif
+
+#ifdef VK_IMG_format_pvrtc
+        case VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 4;
+            bytesPerBlock = 8;
+            break;
+
+        case VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:
+        case VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG:
+        case VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 4;
+            bytesPerBlock = 8;
+            break;
+#endif
+
+#ifdef VK_EXT_texture_compression_astc_hdr
+        case VK_FORMAT_ASTC_4x4_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 4;
+            blockHeight   = 4;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_5x4_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 5;
+            blockHeight   = 4;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_5x5_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 5;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_6x5_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 6;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_6x6_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 6;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x5_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x6_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_8x8_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 8;
+            blockHeight   = 8;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x5_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 5;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x6_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 6;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x8_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 8;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_10x10_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 10;
+            blockHeight   = 10;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_12x10_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 12;
+            blockHeight   = 10;
+            bytesPerBlock = 16;
+            break;
+
+        case VK_FORMAT_ASTC_12x12_SFLOAT_BLOCK_EXT:
+            isBlockFormat = true;
+            blockWidth    = 12;
+            blockHeight   = 12;
+            bytesPerBlock = 16;
+            break;
+#endif
+
+#if (!defined(VK_VERSION_1_1) || !VK_VERSION_1_1) && defined(VK_KHR_sampler_ycbcr_conversion)
+        case VK_FORMAT_G8B8G8R8_422_UNORM_KHR:
+        case VK_FORMAT_B8G8R8G8_422_UNORM_KHR:
+            isPackedFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
+            break;
+
+        case VK_FORMAT_G10X6B10X6G10X6R10X6_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_B10X6G10X6R10X6G10X6_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_G12X4B12X4G12X4R12X4_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_B12X4G12X4R12X4G12X4_422_UNORM_4PACK16_KHR:
+        case VK_FORMAT_G16B16G16R16_422_UNORM:
+        case VK_FORMAT_B16G16R16G16_422_UNORM:
+            isPackedFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM_KHR:
+            is2PlaneFormat = true;
+            blockWidth      = 2;
+            blockHeight     = 2;
+            bytesPerBlock   = 6;
+            break;
+
+        case VK_FORMAT_G8_B8R8_2PLANE_422_UNORM_KHR:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16R16_2PLANE_420_UNORM_KHR:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 12;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16R16_2PLANE_422_UNORM_KHR:
+            is2PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 6;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_422_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 4;
+            break;
+
+        case VK_FORMAT_G8_B8_R8_3PLANE_444_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 1;
+            blockHeight    = 1;
+            bytesPerBlock  = 3;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_420_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 2;
+            bytesPerBlock  = 12;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_422_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 2;
+            blockHeight    = 1;
+            bytesPerBlock  = 8;
+            break;
+
+        case VK_FORMAT_G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16_KHR:
+        case VK_FORMAT_G16_B16_R16_3PLANE_444_UNORM_KHR:
+            is3PlaneFormat = true;
+            blockWidth     = 1;
+            blockHeight    = 1;
+            bytesPerBlock  = 6;
+            break;
+#endif 
         default:
             break;
         }
 
-        if (bc)
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
+
+        assert(!is2PlaneFormat || aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT || aspectPlane == VK_IMAGE_ASPECT_PLANE_1_BIT);
+        assert(!is3PlaneFormat || aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT || aspectPlane == VK_IMAGE_ASPECT_PLANE_1_BIT || aspectPlane == VK_IMAGE_ASPECT_PLANE_2_BIT);
+
+        assert(is2PlaneFormat  || (aspectPlane != VK_IMAGE_ASPECT_PLANE_0_BIT && aspectPlane != VK_IMAGE_ASPECT_PLANE_1_BIT));
+        assert(is3PlaneFormat  || (aspectPlane != VK_IMAGE_ASPECT_PLANE_0_BIT && aspectPlane != VK_IMAGE_ASPECT_PLANE_1_BIT && aspectPlane != VK_IMAGE_ASPECT_PLANE_2_BIT));
+
+#elif (!defined(VK_VERSION_1_1) || !VK_VERSION_1_1) && defined(VK_KHR_sampler_ycbcr_conversion)
+
+        assert(!is2PlaneFormat || aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT_KHR || aspectPlane == VK_IMAGE_ASPECT_PLANE_1_BIT_KHR);
+        assert(!is3PlaneFormat || aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT_KHR || aspectPlane == VK_IMAGE_ASPECT_PLANE_1_BIT_KHR || aspectPlane == VK_IMAGE_ASPECT_PLANE_2_BIT_KHR);
+
+        assert(is2PlaneFormat  || (aspectPlane != VK_IMAGE_ASPECT_PLANE_0_BIT_KHR && aspectPlane != VK_IMAGE_ASPECT_PLANE_1_BIT_KHR));
+        assert(is3PlaneFormat  || (aspectPlane != VK_IMAGE_ASPECT_PLANE_0_BIT_KHR && aspectPlane != VK_IMAGE_ASPECT_PLANE_1_BIT_KHR && aspectPlane != VK_IMAGE_ASPECT_PLANE_2_BIT_KHR));
+
+#endif
+
+        if (isBlockFormat)
         {
+            assert(blockWidth != 0 && blockHeight != 0);
+
             uint64_t numBlocksWide = 0;
             if (width > 0)
             {
-                numBlocksWide = std::max<uint64_t>(1u, (uint64_t(width) + 3u) / 4u);
+                numBlocksWide = std::max<uint64_t>(1u, (uint64_t(width) + (blockWidth - 1u)) / blockWidth);
             }
             uint64_t numBlocksHigh = 0;
             if (height > 0)
             {
-                numBlocksHigh = std::max<uint64_t>(1u, (uint64_t(height) + 3u) / 4u);
+                numBlocksHigh = std::max<uint64_t>(1u, (uint64_t(height) + (blockHeight - 1u)) / blockHeight);
+            }
+            rowBytes = numBlocksWide * bytesPerBlock;
+            numRows = numBlocksHigh;
+            numBytes = rowBytes * numBlocksHigh;
+        }
+        else if(isPackedFormat && blockWidth == 2 && blockHeight == 1) //4:2:2 packed
+        {
+            rowBytes = ((uint64_t(width) + 1u) >> 1) * bytesPerBlock;
+            numRows = uint64_t(height);
+            numBytes = rowBytes * height;
+        }
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
+        else if(is2PlaneFormat)
+        {
+            if(aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT)
+            {
+                //First plane is always of full resolution
+                rowBytes = uint64_t(width) * bytesPerBlock / (blockWidth * blockHeight + 2);
+                numRows  = uint64_t(height);
+            }
+            else
+            {
+                //Second plane is half resolution or full resolution on one or both axes
+                const size_t bytesPerElement = bytesPerBlock / (blockWidth * blockHeight + 2);
+
+                rowBytes = ((uint64_t(width) + blockWidth - 1) / blockWidth) * bytesPerElement * 2;
+                numRows  = ((uint64_t(height) + blockHeight - 1) / blockHeight);
+            }
+            
+            numBytes = rowBytes * numRows;
+        }
+        else if(is3PlaneFormat)
+        {
+            if(aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT)
+            {
+                //First plane is always of full resolution
+                rowBytes = uint64_t(width) * bytesPerBlock / (blockWidth * blockHeight + 2);
+                numRows  = uint64_t(height);
+            }
+            else
+            {
+                //Second and third planes is half resolution or full resolution on one or both axes
+                const size_t bytesPerElement = bytesPerBlock / (blockWidth * blockHeight + 2);
+
+                rowBytes = ((uint64_t(width) + blockWidth - 1) / blockWidth) * bytesPerElement;
+                numRows  = ((uint64_t(height) + blockHeight - 1) / blockHeight);
             }
 
-            numBytes = numBlocksWide * bpe * numBlocksHigh;
+            numBytes = rowBytes * numRows;
         }
-        else if (packed)
+#elif (!defined(VK_VERSION_1_1) || !VK_VERSION_1_1) && defined(VK_KHR_sampler_ycbcr_conversion)
+        else if(is2PlaneFormat)
         {
-            numBytes = ((uint64_t(width) + 1u) >> 1) * bpe * height;
+            if(aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT_KHR)
+            {
+                //First plane is always of full resolution
+                rowBytes = uint64_t(width) * bytesPerBlock / (blockWidth * blockHeight + 2);
+                numRows  = uint64_t(height);
+            }
+            else
+            {
+                //Second plane is half resolution or full resolution on one or both axes
+                const size_t bytesPerElement = bytesPerBlock / (blockWidth * blockHeight + 2);
+
+                rowBytes = ((uint64_t(width) + blockWidth - 1) / blockWidth) * bytesPerElement * 2;
+                numRows  = ((uint64_t(height) + blockHeight - 1) / blockHeight);
+            }
+            
+            numBytes = rowBytes * numRows;
         }
-        else if (planar)
+        else if(is3PlaneFormat)
         {
-            uint64_t rowBytes = ((uint64_t(width) + 1u) >> 1) * bpe;
-            numBytes = (rowBytes * uint64_t(height)) + ((rowBytes * uint64_t(height) + 1u) >> 1);
+            if(aspectPlane == VK_IMAGE_ASPECT_PLANE_0_BIT_KHR)
+            {
+                //First plane is always of full resolution
+                rowBytes = uint64_t(width) * bytesPerBlock / (blockWidth * blockHeight + 2);
+                numRows  = uint64_t(height);
+            }
+            else
+            {
+                //Second and third planes is half resolution or full resolution on one or both axes
+                const size_t bytesPerElement = bytesPerBlock / (blockWidth * blockHeight + 2);
+
+                rowBytes = ((uint64_t(width) + blockWidth - 1) / blockWidth) * bytesPerElement;
+                numRows  = ((uint64_t(height) + blockHeight - 1) / blockHeight);
+            }
+
+            numBytes = rowBytes * numRows;
         }
+#endif
         else
         {
             size_t bpp = BitsPerPixel(fmt);
-            if(bpp == 0)
-                return DDS_LOADER_UNSUPPORTED_FORMAT;
+            if (!bpp)
+                return DDS_LOADER_INVALID_ARG;
 
-            uint64_t rowBytes = (uint64_t(width) * bpp + 7u) / 8u; // round up to nearest byte
+            rowBytes = (uint64_t(width) * bpp + 7u) / 8u; // round up to nearest byte
+            numRows = uint64_t(height);
             numBytes = rowBytes * height;
         }
 
 #if defined(_M_IX86) || defined(_M_ARM) || defined(_M_HYBRID_X86_ARM64)
         static_assert(sizeof(size_t) == 4, "Not a 32-bit platform!");
         if (numBytes > UINT32_MAX || rowBytes > UINT32_MAX || numRows > UINT32_MAX)
-        {
             return DDS_LOADER_ARITHMETIC_OVERFLOW;
-        }
 #else
         static_assert(sizeof(size_t) == 8, "Not a 64-bit platform!");
 #endif
@@ -1374,6 +2173,14 @@ namespace
         if (outNumBytes)
         {
             *outNumBytes = static_cast<size_t>(numBytes);
+        }
+        if (outRowBytes)
+        {
+            *outRowBytes = static_cast<size_t>(rowBytes);
+        }
+        if (outNumRows)
+        {
+            *outNumRows = static_cast<size_t>(numRows);
         }
 
         return DDS_LOADER_SUCCESS;
@@ -1438,7 +2245,10 @@ namespace
                 break;
 
             case 24:
-                // No 24bpp DXGI formats aka D3DFMT_R8G8B8
+                if (ISBITMASK(0xff0000,0x00ff00,0x0000ff,0))
+                {
+                    return VK_FORMAT_R8G8B8_UNORM;
+                }
                 break;
 
             case 16:
@@ -1455,10 +2265,10 @@ namespace
 
                 if(ISBITMASK(0x0f00,0x00f0,0x000f,0xf000))
                 {
-                    //VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT requires an extension
+                    return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
                 }
 
-                // No DXGI format maps to ISBITMASK(0x0f00,0x00f0,0x000f,0) aka D3DFMT_X4R4G4B4
+                // No VK format maps to ISBITMASK(0x0f00,0x00f0,0x000f,0) aka D3DFMT_X4R4G4B4
 
                 // No 3:3:2, 3:3:2:8, or paletted DXGI formats aka D3DFMT_A8R3G3B2, D3DFMT_R3G3B2, D3DFMT_P8, D3DFMT_A8P8, etc.
                 break;
@@ -1468,14 +2278,17 @@ namespace
         {
             if (8 == ddpf.RGBBitCount)
             {
-                if (ISBITMASK(0xff,0,0,0))
+                if (ISBITMASK(0xff,0,0,0)) //D3DFMT_L8
                 {
                     return VK_FORMAT_R8_UNORM; // D3DX10/11 writes this out as DX10 extension
                 }
 
-                // No VK format maps to ISBITMASK(0x0f,0,0,0xf0) aka D3DFMT_A4L4
+                if (ISBITMASK(0x0f, 0, 0, 0xf0)) //D3DFMT_A4L4
+                {
+                    return VK_FORMAT_R4G4_UNORM_PACK8;
+                }
 
-                if (ISBITMASK(0x00ff, 0, 0, 0xff00))
+                if (ISBITMASK(0x00ff, 0, 0, 0xff00)) //D3DFMT_A8L8
                 {
                     return VK_FORMAT_R8G8_UNORM; // Some DDS writers assume the bitcount should be 8 instead of 16
                 }
@@ -1492,13 +2305,8 @@ namespace
                     return VK_FORMAT_R8G8_UNORM; // D3DX10/11 writes this out as DX10 extension
                 }
             }
-        }
-        else if (ddpf.flags & DDS_ALPHA)
-        {
-            if (8 == ddpf.RGBBitCount)
-            {
-                //No VK format corresponds to DXGI_FORMAT_A8_UNORM
-            }
+
+            //No VK format maps to alpha-only D3DFMT_A8
         }
         else if (ddpf.flags & DDS_BUMPDUDV)
         {
@@ -1520,8 +2328,10 @@ namespace
                 {
                     return VK_FORMAT_R16G16_SNORM; // D3DX10/11 writes this out as DX10 extension
                 }
-
-                // No VK format maps to ISBITMASK(0x3ff00000, 0x000ffc00, 0x000003ff, 0xc0000000) aka D3DFMT_A2W10V10U10
+                if (ISBITMASK(0x3ff00000, 0x000ffc00, 0x000003ff, 0xc0000000))
+                {
+                    return VK_FORMAT_A2B10G10R10_SNORM_PACK32; //This may be wrong, alpha shouldn't be signed
+                }
             }
 
             // No VK format maps to DDPF_BUMPLUMINANCE aka D3DFMT_L6V5U5, D3DFMT_X8L8V8U8
@@ -1589,11 +2399,27 @@ namespace
                 return VK_FORMAT_B8G8R8G8_422_UNORM;
             }
 
-            if (MAKEFOURCC('Y','U','Y','2') == ddpf.fourCC)
+#if defined(VK_VERSION_1_1) && VK_VERSION_1_1
+            if (MAKEFOURCC('U', 'Y', 'V', 'Y') == ddpf.fourCC)
             {
-                //YUV2: This loader does not support YUV formats.
-                return VK_FORMAT_UNDEFINED;
+                return VK_FORMAT_G8B8G8R8_422_UNORM;
             }
+
+            if (MAKEFOURCC('Y', 'U', 'Y', '2') == ddpf.fourCC)
+            {
+                return VK_FORMAT_B8G8R8G8_422_UNORM;
+            }
+#elif defined(VK_KHR_sampler_ycbcr_conversion)
+            if (MAKEFOURCC('U', 'Y', 'V', 'Y') == ddpf.fourCC)
+            {
+                return VK_FORMAT_G8B8G8R8_422_UNORM_KHR;
+            }
+
+            if (MAKEFOURCC('Y', 'U', 'Y', '2') == ddpf.fourCC)
+            {
+                return VK_FORMAT_G8B8G8R8_422_UNORM_KHR;
+            }
+#endif // #if defined(VK_VERSION_1_1) && VK_VERSION_1_1
 
             // Check for D3DFORMAT enums being set here
             switch( ddpf.fourCC )
@@ -1637,8 +2463,29 @@ namespace
     {
         switch( format )
         {
+        case VK_FORMAT_R8_UNORM:
+            return VK_FORMAT_R8_SRGB;
+
+        case VK_FORMAT_R8G8_UNORM:
+            return VK_FORMAT_R8G8_SRGB;
+
+        case VK_FORMAT_R8G8B8_UNORM:
+            return VK_FORMAT_R8G8B8_SRGB;
+
+        case VK_FORMAT_B8G8R8_UNORM:
+            return VK_FORMAT_B8G8R8_SRGB;
+
         case VK_FORMAT_R8G8B8A8_UNORM:
             return VK_FORMAT_R8G8B8A8_SRGB;
+
+        case VK_FORMAT_B8G8R8A8_UNORM:
+            return VK_FORMAT_B8G8R8A8_SRGB;
+
+        case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+            return VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+
+        case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+            return VK_FORMAT_BC1_RGB_SRGB_BLOCK;
 
         case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
             return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
@@ -1649,11 +2496,73 @@ namespace
         case VK_FORMAT_BC3_UNORM_BLOCK:
             return VK_FORMAT_BC3_SRGB_BLOCK;
 
-        case VK_FORMAT_B8G8R8A8_UNORM:
-            return VK_FORMAT_B8G8R8A8_SRGB;
-
         case VK_FORMAT_BC7_UNORM_BLOCK:
             return VK_FORMAT_BC7_SRGB_BLOCK;
+
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
+            return VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
+
+        case VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:
+            return VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK;
+
+        case VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:
+            return VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_5x4_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_5x4_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_5x5_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_5x5_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_6x5_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_6x5_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_6x6_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_8x5_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_8x5_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_8x6_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_8x6_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_8x8_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_8x8_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_10x5_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_10x5_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_10x6_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_10x6_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_10x8_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_10x8_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_10x10_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_10x10_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_12x10_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_12x10_SRGB_BLOCK;
+
+        case VK_FORMAT_ASTC_12x12_UNORM_BLOCK:
+            return VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
+
+#ifdef VK_IMG_format_pvrtc
+        case VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:
+            return VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG;
+
+        case VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:
+            return VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG;
+
+        case VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:
+            return VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG;
+
+        case VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:
+            return VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG;
+#endif
 
         default:
             return format;
@@ -1666,9 +2575,13 @@ namespace
     {
         switch (fmt)
         {
-        case VK_FORMAT_D32_SFLOAT:
-        case VK_FORMAT_D24_UNORM_S8_UINT:
         case VK_FORMAT_D16_UNORM:
+        case VK_FORMAT_X8_D24_UNORM_PACK32:
+        case VK_FORMAT_D32_SFLOAT:
+        case VK_FORMAT_S8_UINT:
+        case VK_FORMAT_D16_UNORM_S8_UINT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
             return true;
 
         default:
@@ -1686,13 +2599,12 @@ namespace
         VkFormat format,
         size_t maxsize,
         size_t bitSize,
-        size_t initialOffset,
         const uint8_t* bitData,
         size_t& twidth,
         size_t& theight,
         size_t& tdepth,
         size_t& skipMip,
-        std::vector<VkBufferImageCopy>& initData)
+        std::vector<LoadedSubresourceData>& initData)
     {
         if (!bitData)
         {
@@ -1705,12 +2617,38 @@ namespace
         tdepth = 0;
 
         size_t NumBytes = 0;
+        size_t RowBytes = 0;
         const uint8_t* pEndBits = bitData + bitSize;
 
         initData.clear();
 
         for (size_t p = 0; p < numberOfPlanes; ++p)
         {
+            VkImageAspectFlags aspectPlane = VK_IMAGE_ASPECT_FLAG_BITS_MAX_ENUM;
+            if(numberOfPlanes == 1 && !IsDepthStencil(format))
+            {
+                aspectPlane = VK_IMAGE_ASPECT_COLOR_BIT;
+            }
+            else if(numberOfPlanes == 1)
+            {
+                //No separate depth/stencil
+                aspectPlane = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+            }
+            else if(p == 0)
+            {
+                aspectPlane = VK_IMAGE_ASPECT_PLANE_0_BIT;
+            }
+            else if(p == 1)
+            {
+                aspectPlane = VK_IMAGE_ASPECT_PLANE_1_BIT;
+            }
+            else if(p == 2)
+            {
+                aspectPlane = VK_IMAGE_ASPECT_PLANE_2_BIT;
+            }
+
+            assert(aspectPlane != VK_IMAGE_ASPECT_FLAG_BITS_MAX_ENUM);
+
             const uint8_t* pSrcBits = bitData;
 
             for (size_t j = 0; j < arraySize; j++)
@@ -1721,7 +2659,7 @@ namespace
                 
                 for (size_t i = 0; i < mipCount; i++)
                 {
-                    DDS_LOADER_RESULT surfInfoRes = GetSurfaceInfo(w, h, format, &NumBytes);
+                    DDS_LOADER_RESULT surfInfoRes = GetSurfaceInfo(w, h, format, aspectPlane, &NumBytes, &RowBytes, nullptr);
                     if(surfInfoRes != DDS_LOADER_SUCCESS)
                     {
                         return surfInfoRes;
@@ -1732,6 +2670,8 @@ namespace
                         return DDS_LOADER_ARITHMETIC_OVERFLOW;
                     }
 
+                    size_t dataSize = NumBytes * d;
+
                     if ((mipCount <= 1) || !maxsize || (w <= maxsize && h <= maxsize && d <= maxsize))
                     {
                         if (!twidth)
@@ -1741,30 +2681,15 @@ namespace
                             tdepth  = d;
                         }
 
-                        //Vulkan stores row and depth pitch in texels instead of bytes. This can lead to problems with some
-                        //format packing rules (i.e. RBG24 with 4 bytes padding). Unfortunately, solving this problem is much
-                        //harder than anticipated, because we can't do any modifications to the source data.
-
-                        //For block packed formats: neither Vulkan specification nor VkFormat docs clearly state how the block compressed
-                        //data gets treated for the purpose of VkBufferImageCopy::bufferRowLength and VkBufferImageCopy::bufferImageHeight.
-                        //This loader assumes that block compression does not affect texel row length at all
-
-                        VkBufferImageCopy res;
-                        res.bufferOffset                    = initialOffset + (pSrcBits - bitData);
-                        res.bufferRowLength                 = (uint32_t)w;
-                        res.bufferImageHeight               = (uint32_t)h;
-                        res.imageOffset.x                   = 0;
-                        res.imageOffset.y                   = 0;
-                        res.imageOffset.z                   = 0;
-                        res.imageExtent.width               = (uint32_t)w;
-                        res.imageExtent.height              = (uint32_t)h;
-                        res.imageExtent.depth               = (uint32_t)d;
-                        res.imageSubresource.baseArrayLayer = (uint32_t)j;
-                        res.imageSubresource.layerCount     = 1;
-                        res.imageSubresource.aspectMask     = IsDepthStencil(format) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_COLOR_BIT;
-                        res.imageSubresource.mipLevel       = (uint32_t)i;
-
-                        //We don't support plane resources yet. If we did, we'd have to call AdjustPlaneResource() right there
+                        LoadedSubresourceData res;
+                        res.PData                       = pSrcBits;
+                        res.DataByteSize                = dataSize;
+                        res.SubresourceSlice.aspectMask = aspectPlane;
+                        res.SubresourceSlice.arrayLayer = (uint32_t)j;
+                        res.SubresourceSlice.mipLevel   = (uint32_t)i;
+                        res.Extent.width                = (uint32_t)w;
+                        res.Extent.height               = (uint32_t)h;
+                        res.Extent.depth                = (uint32_t)d;
 
                         initData.emplace_back(res);
                     }
@@ -1890,14 +2815,13 @@ namespace
         const uint8_t* bitData,
         size_t bitSize,
         size_t maxsize,
-        size_t initialDataOffset,
         const VkPhysicalDeviceLimits* deviceLimits,
         VkImageUsageFlags usageFlags,
         VkImageCreateFlags createFlags,
         unsigned int loadFlags,
-        VkAllocationCallbacks* allocator,
+        VkAllocationCallbacks* allocationCallbacks,
         VkImage* texture,
-        std::vector<VkBufferImageCopy>& subresources,
+        std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
         bool* outIsCubeMap) noexcept(false)
     {
         DDS_LOADER_RESULT errCode = DDS_LOADER_SUCCESS;
@@ -1950,16 +2874,11 @@ namespace
                 imageCreateFlags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
             }
 
-            //Vulkan also has a special flag for sub-sampled images (VK_IMAGE_CREATE_SUBSAMPLED_BIT_EXT). BC and YUV block-compressed formatted images may or may not have to be 
-            //created with this flag (the person who wrote this line doesn't know if it's true)
-
-            VkFormat vkFormatFromDxgi = DXGIToVkFormat(d3d10ext->dxgiFormat);
-            if(BitsPerPixel(vkFormatFromDxgi) == 0)
+            format = DXGIToVkFormat(d3d10ext->dxgiFormat);
+            if(BitsPerPixel(format) == 0)
             {
                 return DDS_LOADER_UNSUPPORTED_FORMAT;
             }
-
-            format = vkFormatFromDxgi;
 
             VkImageType imgTypeFromResDim = D3DResourceDimensionToImageType(d3d10ext->resourceDimension);
             switch(imgTypeFromResDim)
@@ -2127,7 +3046,7 @@ namespace
         size_t tdepth = 0;
         errCode = FillInitData(width, height, depth, mipCount, arraySize,
             numberOfPlanes, format,
-            maxsize, bitSize, initialDataOffset, bitData,
+            maxsize, bitSize, bitData,
             twidth, theight, tdepth, skipMip, subresources);
 
         if (errCode == DDS_LOADER_SUCCESS)
@@ -2140,7 +3059,7 @@ namespace
             }
 
             errCode = CreateTextureResource(vkDevice, imgType, twidth, theight, tdepth, reservedMips - skipMip, arraySize,
-                format, usageFlags, imageCreateFlags, loadFlags, allocator, texture);
+                format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture);
 
             if (errCode != DDS_LOADER_SUCCESS && !maxsize && (mipCount > 1))
             {
@@ -2153,12 +3072,12 @@ namespace
 
                 errCode = FillInitData(width, height, depth, mipCount, arraySize,
                     numberOfPlanes, format,
-                    maxsize, bitSize, initialDataOffset, bitData,
+                    maxsize, bitSize, bitData,
                     twidth, theight, tdepth, skipMip, subresources);
                 if (errCode == DDS_LOADER_SUCCESS)
                 {
                     errCode = CreateTextureResource(vkDevice, imgType, twidth, theight, tdepth, mipCount - skipMip, arraySize,
-                        format, usageFlags, imageCreateFlags, loadFlags, allocator, texture);
+                        format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture);
                 }
             }
         }
@@ -2330,9 +3249,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemory(
     const uint8_t* ddsData,
     size_t ddsDataSize,
     VkImage* texture,
-    std::vector<VkBufferImageCopy>& subresources,
+    std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     size_t maxsize,
-    size_t initialOffset,
     DDS_ALPHA_MODE* alphaMode,
     bool* isCubeMap)
 {
@@ -2341,7 +3259,6 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemory(
         ddsData,
         ddsDataSize,
         maxsize,
-        initialOffset,
         nullptr,
         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         0,
@@ -2359,14 +3276,13 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
     const uint8_t* ddsData,
     size_t ddsDataSize,
     size_t maxsize,
-    size_t initialOffset,
     const VkPhysicalDeviceLimits* deviceLimits,
     VkImageUsageFlags usageFlags,
     VkImageCreateFlags createFlags,
     unsigned int loadFlags,
     VkAllocationCallbacks* allocator,
     VkImage* texture,
-    std::vector<VkBufferImageCopy>& subresources,
+    std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     DDS_ALPHA_MODE* alphaMode,
     bool* isCubeMap)
 {
@@ -2406,7 +3322,7 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
 
     errCode = CreateTextureFromDDS(vkDevice,
         header, bitData, bitSize, maxsize,
-        initialOffset + (bitData - ddsData), deviceLimits, usageFlags, createFlags, loadFlags,
+        deviceLimits, usageFlags, createFlags, loadFlags,
         allocator, texture, subresources, isCubeMap);
     if (errCode == DDS_LOADER_SUCCESS)
     {
@@ -2428,10 +3344,9 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFile(
     VkDevice vkDevice,
     const char_type* fileName,
     VkImage* texture,
-    std::vector<uint8_t>& ddsData,
-    std::vector<VkBufferImageCopy>& subresources,
+    std::unique_ptr<uint8_t[]>& ddsData,
+    std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     size_t maxsize,
-    size_t initialOffset,
     DDS_ALPHA_MODE* alphaMode,
     bool* isCubeMap)
 {
@@ -2439,7 +3354,6 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFile(
         vkDevice,
         fileName,
         maxsize,
-        initialOffset,
         nullptr,
         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         0,
@@ -2456,15 +3370,14 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
     VkDevice vkDevice,
     const char_type* fileName,
     size_t maxsize,
-    size_t initialOffset,
     const VkPhysicalDeviceLimits* deviceLimits,
     VkImageUsageFlags usageFlags,
     VkImageCreateFlags createFlags,
     unsigned int loadFlags,
     VkAllocationCallbacks* allocator,
     VkImage* texture,
-    std::vector<uint8_t>& ddsData,
-    std::vector<VkBufferImageCopy>& subresources,
+    std::unique_ptr<uint8_t[]>& ddsData,
+    std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     DDS_ALPHA_MODE* alphaMode,
     bool* isCubeMap)
 {
@@ -2503,7 +3416,7 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
 
     errCode = CreateTextureFromDDS(vkDevice,
         header, bitData, bitSize, maxsize,
-        initialOffset + (bitData - ddsData.data()), deviceLimits,
+        deviceLimits,
         usageFlags, createFlags, loadFlags,
         allocator, texture, subresources, isCubeMap);
 
