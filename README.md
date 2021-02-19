@@ -104,7 +104,7 @@ If the developer uses `VK_NO_PROTOTYPES`, they are expected to manually set the 
 
 ### SetVkCreateImageFuncPtr
 Use this function to set the pointer for dynamically loaded `vkCreateImage()` function. Example:
-```
+```cpp
 DDSTextureLoaderVk::SetVkCreateImageFuncPtr(vkCreateImage); //vkCreateImage was loaded dynamically
 DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 ```
@@ -113,7 +113,7 @@ DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 Use these functions if `vkCreateImage()` is defined as a class member (i.e. `QVulkanFunctions`, `vk::DispatchLoaderDynamic`) or requires additional data to call.  
 
 Example:
-```
+```cpp
 DDSTextureLoaderVk::SetVkCreateImageFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkImageCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkImage* pImage)
 {
     return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkCreateImage(device, pCreateInfo, pAllocator, pImage);
@@ -125,7 +125,7 @@ DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 
 ### SetVkSetDebugUtilsObjectNameFuncPtr
 Use this function to set the pointer for dynamically loaded `vkSetDebugUtilsObjectNameEXT()` function. Example:
-```
+```cpp
 DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtr(vkSetDebugUtilsObjectNameEXT); //vkSetDebugUtilsObjectNameEXT was loaded dynamically
 DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 ```
@@ -134,7 +134,7 @@ DDSTextureLoaderVk::LoadDDSTextureFromFile(...);
 Use these functions if `vkSetDebugUtilsObjectNameEXT()` is defined as a class member (i.e. `QVulkanFunctions`, `vk::DispatchLoaderDynamic`) or requires additional data to call.  
 
 Example:
-```
+```cpp
 DDSTextureLoaderVk::SetVkSetDebugUtilsObjectNameFuncPtrWithUserPtr([](void* userPtr, VkDevice device, const VkDebugUtilsObjectNameInfoEXT* pNameInfo)
 {
     return reinterpret_cast<QVulkanFunctions*>(userPtr)->vkSetDebugUtilsObjectNameEXT(device, pNameInfo);
