@@ -13,10 +13,9 @@ Parameters:
 * `vkDevice`:      Vulkan logical device used to create the image.
 * `ddsData`:       DDS data buffer.
 * `ddsDataSize`:   The size of the buffer provided in `ddsData`.
-* `texture`:       A `VkImage` instance that gets created based on DDS data.
-* `subresources`:  The list of image subresources that get passed as the last parameter of `vkCmdCopyBufferToImage`.
+* `texture`:       A pointer to the `VkImage` handle that gets created based on DDS data.
+* `subresources`:  The returned list of image subresource metadatas.
 * `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `initialOffset`: Initial offset in the intermediate buffer to which the developer will pass the image data.
 * `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
 * `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
@@ -26,11 +25,10 @@ Creates a `VkImage` from a file. Assumes the device supports only minimal requir
 Parameters:
 * `vkDevice`:      Vulkan logical device used to create the image.
 * `fileName`:      The file path of the image.
-* `texture`:       A `VkImage` instance that gets created based on DDS data.
-* `ddsData`:       The image file contents. The developer is expected to copy *this* data into the intermediate buffer.
-* `subresources`:  The list of image subresources that get passed as the last parameter of `vkCmdCopyBufferToImage`.
+* `texture`:       A pointer to the `VkImage` handle that gets created based on DDS data.
+* `ddsData`:       The loaded image file contents that get returned back to the user.
+* `subresources`:  The returned list of image subresource metadatas.
 * `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `initialOffset`: Initial offset in the intermediate buffer to which the developer will pass the image data.
 * `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
 * `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
@@ -38,47 +36,61 @@ Parameters:
 Creates a `VkImage` from a data buffer. An extended version of `LoadDDSTextureFromMemory`.
 
 Parameters:
-* `vkDevice`:      Vulkan logical device used to create the image.
-* `ddsData`:       DDS data buffer.
-* `ddsDataSize`:   The size of the buffer provided in `ddsData`.
-* `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `initialOffset`: Initial offset in the intermediate buffer to which the developer will pass the image data.
-* `deviceLimits`:  A pointer to a valid `VkPhysicalDeviceLimits` structure defining image limits. If `NULL`, the loader assumes the device supports only minimal required image limits.
-* `usageFlags`:    Usage flags the image will be created with.
-* `createFlags`:   Creation flags the image will be created with. The loader automatically handles `VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT`, `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT` and `VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, meaning the developer does not need to set these flags.
-* `loadFlags`:     A member of `DDS_LOADER_FLAGS` describing image loading flags.
-* `allocator`:     An instance of `VkAllocationCallbacks` that will be used for image creation. May be `NULL`.
-* `texture`:       A `VkImage` instance that gets created based on DDS data.
-* `subresources`:  The list of image subresources that get passed as the last parameter of `vkCmdCopyBufferToImage`.
-* `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `vkDevice`:            Vulkan logical device used to create the image.
+* `ddsData`:             DDS data buffer.
+* `ddsDataSize`:         The size of the buffer provided in `ddsData`.
+* `maxsize`:             The maximum size of the image in a single dimension, in texels.
+* `deviceLimits`:        A pointer to a valid `VkPhysicalDeviceLimits` structure defining image limits. If `NULL`, the loader assumes the device supports only minimal required image limits.
+* `usageFlags`:          Usage flags the image will be created with.
+* `createFlags`:         Creation flags the image will be created with. The loader automatically handles `VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT`, `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT` and `VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, meaning the developer does not need to set these flags.
+* `loadFlags`:           A member of `DDS_LOADER_FLAGS` describing image loading flags.
+* `allocationCallbacks`: An instance of `VkAllocationCallbacks` that will be used for image creation. May be `NULL`.
+* `texture`:             A pointer to the `VkImage` handle that gets created based on DDS data.
+* `subresources`:        The returned list of image subresource metadatas.
+* `alphaMode`:           The address by which the image alpha mode gets written. May be `NULL`.
+* `isCubeMap`:           The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
 ### LoadDDSTextureFromFileEx
 Creates a `VkImage` from a file. An extended version of `LoadDDSTextureFromFile`.
 
 Parameters:
-* `vkDevice`:      Vulkan logical device used to create the image.
-* `fileName`:      The file path of the image.
-* `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `initialOffset`: Initial offset in the intermediate buffer to which the developer will pass the image data.
-* `deviceLimits`:  A pointer to a valid `VkPhysicalDeviceLimits` structure defining image limits. If `NULL`, the loader assumes the device supports only minimal required image limits.
-* `usageFlags`:    Usage flags the image will be created with.
-* `createFlags`:   Creation flags the image will be created with. The loader automatically handles `VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT`, `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT` and `VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, meaning the developer does not need to set these flags.
-* `loadFlags`:     A member of `DDS_LOADER_FLAGS` describing image loading flags.
-* `allocator`:     An instance of `VkAllocationCallbacks` that will be used for image creation. May be `NULL`.
-* `texture`:       A `VkImage` instance that gets created based on DDS data.
-* `ddsData`:       The image file contents. The developer is expected to copy *this* data into the intermediate buffer.
-* `subresources`:  The list of image subresources that get passed as the last parameter of `vkCmdCopyBufferToImage`.
-* `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `vkDevice`:            Vulkan logical device used to create the image.
+* `fileName`:            The file path of the image.
+* `maxsize`:             The maximum size of the image in a single dimension, in texels.
+* `deviceLimits`:        A pointer to a valid `VkPhysicalDeviceLimits` structure defining image limits. If `NULL`, the loader assumes the device supports only minimal required image limits.
+* `usageFlags`:          Usage flags the image will be created with.
+* `createFlags`:         Creation flags the image will be created with. The loader automatically handles `VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT`, `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT` and `VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, meaning the developer does not need to set these flags.
+* `loadFlags`:           A member of `DDS_LOADER_FLAGS` describing image loading flags.
+* `allocationCallbacks`: An instance of `VkAllocationCallbacks` that will be used for image creation. May be `NULL`.
+* `texture`:             A pointer to the `VkImage` handle that gets created based on DDS data.
+* `ddsData`:             The loaded image file contents that get returned back to the user.
+* `subresources`:        The returned list of image subresource metadatas.
+* `alphaMode`:           The address by which the image alpha mode gets written. May be `NULL`.
+* `isCubeMap`:           The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
 
+Subresource metadata is returned in a custom structure because Vulkan doesn't have built-in analogs to `D3D12_SUBRESOURCE_DATA`. The loaded subresourse data is defined as
+```cpp
+    struct LoadedSubresourceData
+    {
+        const uint8_t*     PData;
+        size_t             DataByteSize;
+        VkImageSubresource SubresourceSlice;
+        VkExtent3D         Extent;
+    };
+```
+
+Where
+* `PData`:            The pointer to the subresource data in system memory.
+* `DataByteSize`:     The size of the subresource data.
+* `SubresourceSlice`: The slice (plane, mip-level, arrayLayer) address of the subresource.
+* `Extent`:           The extent of the subresource.
 
 ## Debug object names
 Similar to DDSTextureLoader, this loader may assign debug object names in the debug mode. It's only enabled if `VK_EXT_debug_utils` extension is defined and `NO_VK_DEBUG_NAME` is not defined.
 
 
 ## SAL
-Unlike DDSTextureLoader, this loader does not use SAL. This is to make the loader cross-platform.
+Unlike DDSTextureLoader, this loader does not use SAL. This is done to make the loader cross-platform.
 
 
 ## Queue family ownership
@@ -145,30 +157,9 @@ This loader uses custom error codes, because `HRESULT` codes are valid only on W
 * This loader does not support `DXGI_FORMAT_A8_UNORM` and `DXGI_FORMAT_R1_UNORM` formats. There are no equivalents to these formats in Vulkan.
 * This loader does not support `DXGI_FORMAT_B8G8R8X8_UNORM`, `DXGI_FORMAT_B8G8R8X8_TYPELESS`, `DXGI_FORMAT_B8G8R8X8_UNORM_SRGB` formats. Vulkan does not support RGB formats with 32-bit stride.
 * This loader does not support `DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM`. Vulkan does not provide support for XR biased images.
-* This loader does not support almost all of YUV formats. This feature is in the backlog. The full list of YUV formats that are not supported:
-  * `DXGI_FORMAT_AYUV`
-  * `DXGI_FORMAT_Y410`
-  * `DXGI_FORMAT_Y416`
-  * `DXGI_FORMAT_NV12`
-  * `DXGI_FORMAT_P010`
-  * `DXGI_FORMAT_P016`
-  * `DXGI_FORMAT_420_OPAQUE`
-  * `DXGI_FORMAT_YUY2`
-  * `DXGI_FORMAT_Y210`
-  * `DXGI_FORMAT_Y216`
+* This loader does not support some of YUV formats due to the lack of corresponding formats in Vulkan. The full list of YUV formats that are not supported:
   * `DXGI_FORMAT_NV11`
   * `DXGI_FORMAT_AI44`
   * `DXGI_FORMAT_IA44`
   * `DXGI_FORMAT_P8`
   * `DXGI_FORMAT_A8P8`
-  * `DXGI_FORMAT_P208`
-  * `DXGI_FORMAT_V208`
-  * `DXGI_FORMAT_V408`
-* This loader DOES support compressed BC formats, `DXGI_FORMAT_R8G8_B8G8_UNORM` and `DXGI_FORMAT_G8R8_G8B8_UNORM`. See **padding** section for more details.
-* This loader DOES support `DXGI_FORMAT_B4G4R4A4_UNORM` format, but only if `VK_EXT_4444_formats` extension is provided.
-
-
-## Padding
-Since Vulkan expects `bufferRowLength` and `bufferImageHeight` to be in texels instead of bytes, it's currently impossible in this loader to load 3-byte RGB images with 4-byte padding.
-
-Also, due to ambiguity in Vulkan documentation, it's not fully clear if Vulkan considers 2x1 blocks in compressed images as 1 or 2 texels. The current implementation makes the assumption that it considers these blocks as 2 texels.
