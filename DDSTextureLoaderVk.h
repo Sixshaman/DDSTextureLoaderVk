@@ -113,8 +113,8 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         VkImage* texture,
         std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
         size_t maxsize = 0,
-        DDS_ALPHA_MODE* alphaMode = nullptr,
-        bool* isCubeMap = nullptr);
+        VkImageCreateInfo* outImageCreateInfo = nullptr,
+        DDS_ALPHA_MODE* outAlphaMode = nullptr);
 
     DDS_LOADER_RESULT __cdecl LoadDDSTextureFromFile(
         VkDevice vkDevice,
@@ -123,8 +123,8 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         std::unique_ptr<uint8_t[]>& ddsData,
         std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
         size_t maxsize = 0,
-        DDS_ALPHA_MODE* alphaMode = nullptr,
-        bool* isCubeMap = nullptr);
+        VkImageCreateInfo* outImageCreateInfo = nullptr,
+        DDS_ALPHA_MODE* alphaMode = nullptr);
 
     // Extended version
     DDS_LOADER_RESULT __cdecl LoadDDSTextureFromMemoryEx(
@@ -139,8 +139,8 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         VkAllocationCallbacks* allocationCallbacks,
         VkImage* texture,
         std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
-        DDS_ALPHA_MODE* alphaMode = nullptr,
-        bool* isCubeMap = nullptr);
+        VkImageCreateInfo* outImageCreateInfo = nullptr,
+        DDS_ALPHA_MODE* alphaMode = nullptr);
 
     DDS_LOADER_RESULT __cdecl LoadDDSTextureFromFileEx(
         VkDevice vkDevice,
@@ -154,6 +154,6 @@ void SetVkSetDebugUtilsObjectNameUserPtr(void* userPtr);
         VkImage* texture,
         std::unique_ptr<uint8_t[]>& ddsData,
         std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
-        DDS_ALPHA_MODE* alphaMode = nullptr,
-        bool* isCubeMap = nullptr);
+        VkImageCreateInfo* outImageCreateInfo = nullptr,
+        DDS_ALPHA_MODE* alphaMode = nullptr);
 }

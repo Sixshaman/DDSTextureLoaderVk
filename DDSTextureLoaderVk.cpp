@@ -822,8 +822,12 @@ namespace
             //Vulkan does not support palletized formats
             return VK_FORMAT_UNDEFINED;
 
+#ifdef VK_EXT_4444_formats 
+
         case 115: //DXGI_FORMAT_B4G4R4A4_UNORM
-            return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
+            return VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT;
+
+#endif 
 
 #if defined(VK_VERSION_1_1) && VK_VERSION_1_1
         case 130: //DXGI_FORMAT_P208
@@ -2263,10 +2267,12 @@ namespace
 
                 // No VK format maps to ISBITMASK(0x7c00,0x03e0,0x001f,0) aka D3DFMT_X1R5G5B5
 
+#ifdef VK_EXT_4444_formats 
                 if(ISBITMASK(0x0f00,0x00f0,0x000f,0xf000))
                 {
-                    return VK_FORMAT_B4G4R4A4_UNORM_PACK16;
+                    return VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT;
                 }
+#endif
 
                 // No VK format maps to ISBITMASK(0x0f00,0x00f0,0x000f,0) aka D3DFMT_X4R4G4B4
 
@@ -2743,7 +2749,8 @@ namespace
         VkImageCreateFlags createFlags,
         unsigned int loadFlags,
         const VkAllocationCallbacks* allocator,
-        VkImage* texture) noexcept
+        VkImage* texture,
+        VkImageCreateInfo* outImageCreateInfo) noexcept
     {
         if (!vkDevice)
             return DDS_LOADER_BAD_POINTER;
@@ -2773,6 +2780,11 @@ namespace
         imageCreateInfo.queueFamilyIndexCount = 0;
         imageCreateInfo.pQueueFamilyIndices   = nullptr;
         imageCreateInfo.initialLayout         = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        if(outImageCreateInfo != nullptr)
+        {
+            *outImageCreateInfo = imageCreateInfo;
+        }
 
         if(vkCreateImage != nullptr)
         {
@@ -2822,7 +2834,7 @@ namespace
         VkAllocationCallbacks* allocationCallbacks,
         VkImage* texture,
         std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
-        bool* outIsCubeMap) noexcept(false)
+        VkImageCreateInfo* outImageCreateInfo) noexcept(false)
     {
         DDS_LOADER_RESULT errCode = DDS_LOADER_SUCCESS;
 
@@ -2833,7 +2845,6 @@ namespace
         VkImageType imgType = VK_IMAGE_TYPE_2D;
         uint32_t arraySize = 1;
         VkFormat format = VK_FORMAT_UNDEFINED;
-        bool isCubeMap = false;
 
         size_t mipCount = header->mipMapCount;
         if (0 == mipCount)
@@ -2897,7 +2908,6 @@ namespace
                 {
                     imageCreateFlags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
                     arraySize *= 6;
-                    isCubeMap = true;
                 }
 
                 if(arraySize > 1)
@@ -2950,7 +2960,6 @@ namespace
                     }
 
                     arraySize = 6;
-                    isCubeMap = true;
                     imageCreateFlags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
                 }
 
@@ -2982,7 +2991,7 @@ namespace
             break;
 
         case VK_IMAGE_TYPE_2D:
-            if (isCubeMap)
+            if (imageCreateFlags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT)
             {
                 // This is the right bound because we set arraySize to (NumCubes*6) above
                 if ((arraySize > maxImageArrayLayers) ||
@@ -3026,11 +3035,6 @@ namespace
             return DDS_LOADER_UNSUPPORTED_FORMAT;
         }
 
-        if(outIsCubeMap != nullptr)
-        {
-            *outIsCubeMap = isCubeMap;
-        }
-
         // Create the texture
         size_t numberOfResources = (imgType == VK_IMAGE_TYPE_3D)
                                    ? 1 : arraySize;
@@ -3059,7 +3063,7 @@ namespace
             }
 
             errCode = CreateTextureResource(vkDevice, imgType, twidth, theight, tdepth, reservedMips - skipMip, arraySize,
-                format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture);
+                format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture, outImageCreateInfo);
 
             if (errCode != DDS_LOADER_SUCCESS && !maxsize && (mipCount > 1))
             {
@@ -3077,7 +3081,7 @@ namespace
                 if (errCode == DDS_LOADER_SUCCESS)
                 {
                     errCode = CreateTextureResource(vkDevice, imgType, twidth, theight, tdepth, mipCount - skipMip, arraySize,
-                        format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture);
+                        format, usageFlags, imageCreateFlags, loadFlags, allocationCallbacks, texture, outImageCreateInfo);
                 }
             }
         }
@@ -3251,8 +3255,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemory(
     VkImage* texture,
     std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     size_t maxsize,
-    DDS_ALPHA_MODE* alphaMode,
-    bool* isCubeMap)
+    VkImageCreateInfo* outImageCreateInfo,
+    DDS_ALPHA_MODE* alphaMode)
 {
     return LoadDDSTextureFromMemoryEx(
         vkDevice,
@@ -3266,8 +3270,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemory(
         nullptr,
         texture,
         subresources,
-        alphaMode,
-        isCubeMap);
+        outImageCreateInfo,
+        alphaMode);
 }
 
 
@@ -3283,8 +3287,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
     VkAllocationCallbacks* allocator,
     VkImage* texture,
     std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
-    DDS_ALPHA_MODE* alphaMode,
-    bool* isCubeMap)
+    VkImageCreateInfo* outImageCreateInfo,
+    DDS_ALPHA_MODE* alphaMode)
 {
     if (texture)
     {
@@ -3294,9 +3298,9 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
     {
         *alphaMode = DDS_ALPHA_MODE_UNKNOWN;
     }
-    if (isCubeMap)
+    if (outImageCreateInfo)
     {
-        *isCubeMap = false;
+        memset(outImageCreateInfo, 0, sizeof(VkImageCreateInfo));
     }
 
     if(!vkDevice || !ddsData || !texture)
@@ -3323,7 +3327,7 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromMemoryEx(
     errCode = CreateTextureFromDDS(vkDevice,
         header, bitData, bitSize, maxsize,
         deviceLimits, usageFlags, createFlags, loadFlags,
-        allocator, texture, subresources, isCubeMap);
+        allocator, texture, subresources, outImageCreateInfo);
     if (errCode == DDS_LOADER_SUCCESS)
     {
         if (texture && *texture)
@@ -3347,8 +3351,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFile(
     std::unique_ptr<uint8_t[]>& ddsData,
     std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
     size_t maxsize,
-    DDS_ALPHA_MODE* alphaMode,
-    bool* isCubeMap)
+    VkImageCreateInfo* outImageCreateInfo,
+    DDS_ALPHA_MODE* outAlphaMode)
 {
     return LoadDDSTextureFromFileEx(
         vkDevice,
@@ -3362,8 +3366,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFile(
         texture,
         ddsData,
         subresources,
-        alphaMode,
-        isCubeMap);
+        outImageCreateInfo,
+        outAlphaMode);
 }
 
 DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
@@ -3378,20 +3382,20 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
     VkImage* texture,
     std::unique_ptr<uint8_t[]>& ddsData,
     std::vector<DDSTextureLoaderVk::LoadedSubresourceData>& subresources,
-    DDS_ALPHA_MODE* alphaMode,
-    bool* isCubeMap)
+    VkImageCreateInfo* outImageCreateInfo,
+    DDS_ALPHA_MODE* outAlphaMode)
 {
     if (texture)
     {
         *texture = nullptr;
     }
-    if (alphaMode)
+    if (outAlphaMode)
     {
-        *alphaMode = DDS_ALPHA_MODE_UNKNOWN;
+        *outAlphaMode = DDS_ALPHA_MODE_UNKNOWN;
     }
-    if (isCubeMap)
+    if (outImageCreateInfo)
     {
-        *isCubeMap = false;
+        memset(outImageCreateInfo, 0, sizeof(VkImageCreateInfo));
     }
 
     if (!vkDevice || !fileName || !texture)
@@ -3418,7 +3422,7 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
         header, bitData, bitSize, maxsize,
         deviceLimits,
         usageFlags, createFlags, loadFlags,
-        allocator, texture, subresources, isCubeMap);
+        allocator, texture, subresources, outImageCreateInfo);
 
     if (errCode == DDS_LOADER_SUCCESS)
     {
@@ -3434,8 +3438,8 @@ DDS_LOADER_RESULT DDSTextureLoaderVk::LoadDDSTextureFromFileEx(
         #endif // _WIN32
 
     
-        if (alphaMode)
-            *alphaMode = GetAlphaMode(header);
+        if (outAlphaMode)
+            *outAlphaMode = GetAlphaMode(header);
     }
 
     return errCode;
