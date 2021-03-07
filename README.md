@@ -10,27 +10,27 @@ The function only creates a `VkImage` object and loads the data from the disk. T
 Creates a `VkImage` from a data buffer. Assumes the device supports only minimal required image limits.
 
 Parameters:
-* `vkDevice`:      Vulkan logical device used to create the image.
-* `ddsData`:       DDS data buffer.
-* `ddsDataSize`:   The size of the buffer provided in `ddsData`.
-* `texture`:       A pointer to the `VkImage` handle that gets created based on DDS data.
-* `subresources`:  The returned list of image subresource metadatas.
-* `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `vkDevice`:           Vulkan logical device used to create the image.
+* `ddsData`:            DDS data buffer.
+* `ddsDataSize`:        The size of the buffer provided in `ddsData`.
+* `texture`:            A pointer to the `VkImage` handle that gets created based on DDS data.
+* `subresources`:       The returned list of image subresource metadatas.
+* `maxsize`:            The maximum size of the image in a single dimension, in texels.
+* `outImageCreateInfo`: The address by which the instance of `VkImageCreateInfo` used to create the texture gets written. May be `NULL`.
+* `outAlphaMode`:       The address by which the image alpha mode gets written. May be `NULL`.
 
 ### LoadDDSTextureFromFile
 Creates a `VkImage` from a file. Assumes the device supports only minimal required image limits.
 
 Parameters:
-* `vkDevice`:      Vulkan logical device used to create the image.
-* `fileName`:      The file path of the image.
-* `texture`:       A pointer to the `VkImage` handle that gets created based on DDS data.
-* `ddsData`:       The loaded image file contents that get returned back to the user.
-* `subresources`:  The returned list of image subresource metadatas.
-* `maxsize`:       The maximum size of the image in a single dimension, in texels.
-* `alphaMode`:     The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:     The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `vkDevice`:           Vulkan logical device used to create the image.
+* `fileName`:           The file path of the image.
+* `texture`:            A pointer to the `VkImage` handle that gets created based on DDS data.
+* `ddsData`:            The loaded image file contents that get returned back to the user.
+* `subresources`:       The returned list of image subresource metadatas.
+* `maxsize`:            The maximum size of the image in a single dimension, in texels.
+* `outImageCreateInfo`: The address by which the instance of `VkImageCreateInfo` used to create the texture gets written. May be `NULL`.
+* `outAlphaMode`:       The address by which the image alpha mode gets written. May be `NULL`.
 
 ### LoadDDSTextureFromMemoryEx
 Creates a `VkImage` from a data buffer. An extended version of `LoadDDSTextureFromMemory`.
@@ -47,8 +47,8 @@ Parameters:
 * `allocationCallbacks`: An instance of `VkAllocationCallbacks` that will be used for image creation. May be `NULL`.
 * `texture`:             A pointer to the `VkImage` handle that gets created based on DDS data.
 * `subresources`:        The returned list of image subresource metadatas.
-* `alphaMode`:           The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:           The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `outImageCreateInfo`:  The address by which the instance of `VkImageCreateInfo` used to create the texture gets written. May be `NULL`.
+* `outAlphaMode`:        The address by which the image alpha mode gets written. May be `NULL`.
 
 ### LoadDDSTextureFromFileEx
 Creates a `VkImage` from a file. An extended version of `LoadDDSTextureFromFile`.
@@ -65,8 +65,8 @@ Parameters:
 * `texture`:             A pointer to the `VkImage` handle that gets created based on DDS data.
 * `ddsData`:             The loaded image file contents that get returned back to the user.
 * `subresources`:        The returned list of image subresource metadatas.
-* `alphaMode`:           The address by which the image alpha mode gets written. May be `NULL`.
-* `isCubeMap`:           The address by which, if the image is cubemap, `true` will be written. Otherwise, `false` will be written. May be `NULL`.
+* `outImageCreateInfo`:  The address by which the instance of `VkImageCreateInfo` used to create the texture gets written. May be `NULL`.
+* `outAlphaMode`:        The address by which the image alpha mode gets written. May be `NULL`.
 
 Subresource metadata is returned in a custom structure because Vulkan doesn't have built-in analogs to `D3D12_SUBRESOURCE_DATA`. The loaded subresourse data is defined as
 ```cpp
