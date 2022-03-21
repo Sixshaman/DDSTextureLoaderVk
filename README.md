@@ -7,7 +7,7 @@ The function only creates a `VkImage` object and loads the data from the disk. T
 
 ## Functions
 ### LoadDDSTextureFromMemory
-Creates a `VkImage` from a data buffer. Assumes the device supports only minimal required image limits.
+Creates a `VkImage` from a data buffer. Assumes the device supports only [minimally required](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#limits-minmax) image limits.
 
 Parameters:
 * `vkDevice`:           Vulkan logical device used to create the image.
@@ -20,7 +20,7 @@ Parameters:
 * `outAlphaMode`:       The address by which the image alpha mode gets written. May be `NULL`.
 
 ### LoadDDSTextureFromFile
-Creates a `VkImage` from a file. Assumes the device supports only minimal required image limits.
+Creates a `VkImage` from a file. Assumes the device supports only [minimally required](https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/vkspec.html#limits-minmax) image limits.
 
 Parameters:
 * `vkDevice`:           Vulkan logical device used to create the image.
